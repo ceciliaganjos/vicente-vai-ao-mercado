@@ -2,9 +2,15 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Vicente Vai ao Mercado</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      touch-action: none;
+    }
     body {
       background: #050510;
       display: flex;
@@ -14,24 +20,97 @@
       min-height: 100vh;
       font-family: 'Courier New', monospace;
     }
+
+    /* ── Wrapper escala o canvas para caber na tela ── */
+    #game-wrapper {
+      position: relative;
+      width: min(800px, 100vw);
+      aspect-ratio: 2 / 1;
+    }
     canvas {
       display: block;
+      width: 100%;
+      height: 100%;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
       border: 3px solid #00ffee;
       box-shadow: 0 0 30px #00ffee55, 0 0 60px #ff00aa33;
+      touch-action: none;
     }
+
+    /* ── Botões de controle touch ── */
+    #touch-controls {
+      position: absolute;
+      bottom: 8px;
+      left: 0; right: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding: 0 12px;
+      pointer-events: none;
+    }
+    #touch-controls .left-btns {
+      display: flex;
+      gap: 8px;
+      pointer-events: all;
+    }
+    #touch-controls .right-btns {
+      pointer-events: all;
+    }
+    .ctrl-btn {
+      width: 70px;
+      height: 70px;
+      background: rgba(0, 255, 238, 0.15);
+      border: 2px solid rgba(0, 255, 238, 0.5);
+      border-radius: 50%;
+      color: #00ffee;
+      font-size: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .ctrl-btn:active, .ctrl-btn.pressed {
+      background: rgba(0, 255, 238, 0.35);
+    }
+    #btn-jump {
+      background: rgba(255, 0, 170, 0.15);
+      border-color: rgba(255, 0, 170, 0.5);
+      color: #ff00aa;
+      width: 80px;
+      height: 80px;
+      font-size: 30px;
+    }
+    #btn-jump:active, #btn-jump.pressed {
+      background: rgba(255, 0, 170, 0.35);
+    }
+
     #subtitle {
       color: #00ccbb;
-      font-size: 13px;
-      margin-top: 8px;
-      letter-spacing: 2px;
+      font-size: 12px;
+      margin-top: 6px;
+      letter-spacing: 1px;
+      text-align: center;
     }
   </style>
 </head>
 <body>
-<canvas id="game" width="800" height="400"></canvas>
-<div id="subtitle">← → / A D para mover &nbsp;|&nbsp; ↑ / ESPAÇO para pular</div>
+<div id="game-wrapper">
+  <canvas id="game" width="800" height="400"></canvas>
+  <div id="touch-controls">
+    <div class="left-btns">
+      <button class="ctrl-btn" id="btn-left">◀</button>
+      <button class="ctrl-btn" id="btn-right">▶</button>
+    </div>
+    <div class="right-btns">
+      <button class="ctrl-btn" id="btn-jump">▲</button>
+    </div>
+  </div>
+</div>
+<div id="subtitle">◀ ▶ mover &nbsp;|&nbsp; ▲ pular &nbsp;|&nbsp; teclado: ← → ↑ / ESPAÇO</div>
 
 <script>
 // ─────────────────────────────────────────────────────────
@@ -1213,6 +1292,38 @@ function loop(ts) {
 }
 
 requestAnimationFrame(loop);
+
+// ── Touch controls ──────────────────────────────────────────────
+(function setupTouchControls() {
+  function hold(btn, downFn, upFn) {
+    btn.addEventListener('touchstart', e => { e.preventDefault(); btn.classList.add('pressed'); downFn(); }, { passive: false });
+    btn.addEventListener('touchend',   e => { e.preventDefault(); btn.classList.remove('pressed'); upFn(); }, { passive: false });
+    btn.addEventListener('touchcancel',e => { e.preventDefault(); btn.classList.remove('pressed'); upFn(); }, { passive: false });
+  }
+  hold(
+    document.getElementById('btn-left'),
+    () => { KEYS['ArrowLeft']  = true;  },
+    () => { KEYS['ArrowLeft']  = false; }
+  );
+  hold(
+    document.getElementById('btn-right'),
+    () => { KEYS['ArrowRight'] = true;  },
+    () => { KEYS['ArrowRight'] = false; }
+  );
+  const btnJump = document.getElementById('btn-jump');
+  btnJump.addEventListener('touchstart', e => {
+    e.preventDefault();
+    btnJump.classList.add('pressed');
+    onJumpPress();
+    onAction();
+  }, { passive: false });
+  btnJump.addEventListener('touchend',   e => { e.preventDefault(); btnJump.classList.remove('pressed'); }, { passive: false });
+  btnJump.addEventListener('touchcancel',e => { e.preventDefault(); btnJump.classList.remove('pressed'); }, { passive: false });
+
+  // Prevent canvas scroll/zoom on touch
+  canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+  canvas.addEventListener('touchmove',  e => e.preventDefault(), { passive: false });
+})();
 </script>
 </body>
 </html>
