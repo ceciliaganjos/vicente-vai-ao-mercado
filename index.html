@@ -31,7 +31,7 @@
 </head>
 <body>
 <canvas id="game" width="800" height="400"></canvas>
-<div id="subtitle">↑ / ESPAÇO / CLIQUE para pular</div>
+<div id="subtitle">← → / A D para mover &nbsp;|&nbsp; ↑ / ESPAÇO para pular</div>
 
 <script>
 // ─────────────────────────────────────────────────────────
@@ -41,7 +41,8 @@ const W = 800, H = 400;
 const GROUND_Y    = 320;   // top of ground surface
 const GRAVITY     = 0.42;
 const JUMP_FORCE  = -16;
-const BASE_SPEED  = 210;   // world scroll px/s
+const MOVE_SPEED  = 230;   // player movement speed px/s
+const ENEMY_SPEED = 130;   // enemy walk speed px/s (world coords)
 const WORLD_LEN   = 6000;  // total world distance
 const PLAYER_X    = 140;   // fixed screen X
 
@@ -89,19 +90,19 @@ let worldX   = 0;
 let timer    = 0;
 let bestTime = null;
 let lives    = 3;
-let speed    = BASE_SPEED;
 
 // Player object
 const PL = {
   y: GROUND_Y - 72,
   vy: 0,
   onGround: true,
-  anim: 'run',   // run | idle | jump
+  anim: 'idle',
   frame: 0,
   frameTick: 0,
   invincible: 0,
   width:  38,
   height: 60,
+  facingLeft: false,
 };
 
 function playerTop()    { return PL.y; }
@@ -197,7 +198,6 @@ function startGame() {
   timer      = 0;
   lives      = 3;
   score      = 0;
-  speed      = BASE_SPEED;
   enemies    = [];
   spawnTick  = 0;
   spawnRate  = 2.4;
@@ -205,13 +205,14 @@ function startGame() {
   holes      = makeHoles();
   coins      = makeCoins();
 
-  PL.y         = GROUND_Y - PL.height;
-  PL.vy        = 0;
-  PL.onGround  = true;
-  PL.anim      = 'run';
-  PL.frame     = 0;
-  PL.frameTick = 0;
+  PL.y          = GROUND_Y - PL.height;
+  PL.vy         = 0;
+  PL.onGround   = true;
+  PL.anim       = 'idle';
+  PL.frame      = 0;
+  PL.frameTick  = 0;
   PL.invincible = 0;
+  PL.facingLeft = false;
 }
 
 function resumeGame() {
@@ -219,8 +220,9 @@ function resumeGame() {
   PL.y          = GROUND_Y - PL.height;
   PL.vy         = 0;
   PL.onGround   = true;
-  PL.anim       = 'run';
+  PL.anim       = 'idle';
   PL.invincible = 2.5;
+  PL.facingLeft = false;
   enemies       = [];
   spawnTick     = 0;
 }
@@ -250,10 +252,23 @@ function spawnParticles(x, y, color, n) {
 function update(dt) {
   if (state !== 'playing') return;
 
-  // World progress
-  worldX += speed * dt;
-  timer  += dt;
-  speed   = BASE_SPEED + Math.min(timer * 6, 120);
+  timer += dt;
+
+  // ── Horizontal movement ───────────────────────────────
+  const goRight = KEYS['ArrowRight'] || KEYS['KeyD'];
+  const goLeft  = KEYS['ArrowLeft']  || KEYS['KeyA'];
+
+  let moveDir = 0;
+  if (goRight) {
+    worldX += MOVE_SPEED * dt;
+    moveDir = 1;
+    PL.facingLeft = false;
+  } else if (goLeft && worldX > 0) {
+    worldX -= MOVE_SPEED * dt;
+    moveDir = -1;
+    PL.facingLeft = true;
+  }
+  worldX = Math.max(0, worldX);
 
   // Win check
   if (worldX >= WORLD_LEN) {
@@ -263,8 +278,8 @@ function update(dt) {
     return;
   }
 
-  // Spawn difficulty
-  spawnRate = Math.max(0.9, 2.4 - timer * 0.04);
+  // Spawn difficulty scales with distance
+  spawnRate = Math.max(1.0, 2.4 - worldX * 0.0003);
 
   // ── Player physics ────────────────────────────────────
   PL.vy += GRAVITY;
@@ -278,10 +293,10 @@ function update(dt) {
   }
 
   if (!overHole && playerBottom() >= GROUND_Y) {
-    PL.y         = GROUND_Y - PL.height;
-    PL.vy        = 0;
-    PL.onGround  = true;
-    if (PL.anim === 'jump') { PL.anim = 'run'; PL.frame = 0; }
+    PL.y        = GROUND_Y - PL.height;
+    PL.vy       = 0;
+    PL.onGround = true;
+    if (PL.anim === 'jump') { PL.anim = moveDir !== 0 ? 'run' : 'idle'; PL.frame = 0; }
   } else {
     PL.onGround = false;
     if (PL.y > H + 80 && PL.invincible <= 0) {
@@ -291,12 +306,19 @@ function update(dt) {
   }
 
   // ── Player animation ──────────────────────────────────
+  if (PL.onGround) {
+    if (PL.anim !== 'jump') {
+      const nextAnim = moveDir !== 0 ? 'run' : 'idle';
+      if (PL.anim !== nextAnim) { PL.anim = nextAnim; PL.frame = 0; PL.frameTick = 0; }
+    }
+  }
+
   PL.frameTick += dt;
-  const speeds = { run: 0.07, jump: 0.10, idle: 0.18 };
-  const counts = { run: 7,    jump: 4,    idle: 4     };
-  if (PL.frameTick > speeds[PL.anim]) {
+  const animSpeeds = { run: 0.07, jump: 0.10, idle: 0.18 };
+  const animCounts = { run: 7,    jump: 4,    idle: 4     };
+  if (PL.frameTick > animSpeeds[PL.anim]) {
     PL.frameTick = 0;
-    PL.frame = (PL.frame + 1) % counts[PL.anim];
+    PL.frame = (PL.frame + 1) % animCounts[PL.anim];
   }
 
   if (PL.invincible > 0) PL.invincible -= dt;
@@ -307,9 +329,9 @@ function update(dt) {
     spawnTick = 0;
     const jumping = Math.random() < 0.3;
     enemies.push({
-      sx: W + 64,   // screen X
-      y:  GROUND_Y - 56,
-      vy: jumping ? -(8 + Math.random() * 3) : 0,
+      wx:    worldX + W + 64,   // world X (enemies stored in world coords)
+      y:     GROUND_Y - 56,
+      vy:    jumping ? -(8 + Math.random() * 3) : 0,
       frame: 0,
       tick:  0,
       w: 48, h: 56,
@@ -319,7 +341,7 @@ function update(dt) {
   // ── Update enemies ────────────────────────────────────
   for (let i = enemies.length - 1; i >= 0; i--) {
     const en = enemies[i];
-    en.sx -= (speed + 55) * dt;
+    en.wx -= ENEMY_SPEED * dt;  // enemy walks left in world space
 
     en.vy += GRAVITY;
     en.y  += en.vy;
@@ -331,15 +353,18 @@ function update(dt) {
     en.tick += dt;
     if (en.tick > 0.13) { en.tick = 0; en.frame = (en.frame + 1) % 4; }
 
-    // Off screen
-    if (en.sx < -100) { enemies.splice(i, 1); continue; }
+    // Screen position
+    const esx = en.wx - worldX;
 
-    // Collision
+    // Remove if far off screen (behind player by 2 screens)
+    if (esx < -500) { enemies.splice(i, 1); continue; }
+
+    // Collision (only from the right side of the player)
     if (PL.invincible <= 0) {
       const margin = 10;
       const px = PLAYER_X + margin, py = PL.y + margin;
       const pw = PL.width - margin * 2, ph = PL.height - margin;
-      const ex = en.sx + 6, ey = en.y + 8, ew = en.w - 12, eh = en.h - 8;
+      const ex = esx + 6, ey = en.y + 8, ew = en.w - 12, eh = en.h - 8;
       if (px < ex + ew && px + pw > ex && py < ey + eh && py + ph > ey) {
         enemies.splice(i, 1);
         killPlayer();
@@ -672,10 +697,14 @@ function drawPlayer() {
   if (img && img.complete && img.naturalWidth > 0) {
     const dw = img.naturalWidth  * SCALE;
     const dh = img.naturalHeight * SCALE;
-    // Center horizontally, align bottom to player bottom
-    const dx = PLAYER_X + PL.width / 2 - dw / 2;
+    const cx = PLAYER_X + PL.width / 2;
     const dy = PL.y + PL.height - dh;
-    ctx.drawImage(img, dx, dy, dw, dh);
+    if (PL.facingLeft) {
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, -cx - dw / 2, dy, dw, dh);
+    } else {
+      ctx.drawImage(img, cx - dw / 2, dy, dw, dh);
+    }
   } else {
     ctx.fillStyle = '#ff6688';
     ctx.fillRect(PLAYER_X, PL.y, PL.width, PL.height);
@@ -691,12 +720,15 @@ function drawPlayer() {
 // ─────────────────────────────────────────────────────────
 function drawEnemies() {
   for (const en of enemies) {
+    const esx = en.wx - worldX;
+    if (esx > W + 80 || esx < -80) continue;
+
     ctx.save();
 
     // Shadow
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath();
-    ctx.ellipse(en.sx + en.w / 2, GROUND_Y + 4, 18, 5, 0, 0, Math.PI * 2);
+    ctx.ellipse(esx + en.w / 2, GROUND_Y + 4, 18, 5, 0, 0, Math.PI * 2);
     ctx.fill();
 
     const SCALE = 1.9;
@@ -704,10 +736,10 @@ function drawEnemies() {
     if (img && img.complete && img.naturalWidth > 0) {
       const dw = img.naturalWidth  * SCALE;
       const dh = img.naturalHeight * SCALE;
-      ctx.drawImage(img, en.sx + en.w / 2 - dw / 2, en.y + en.h - dh, dw, dh);
+      ctx.drawImage(img, esx + en.w / 2 - dw / 2, en.y + en.h - dh, dw, dh);
     } else {
-      ctx.fillStyle = '#44dd44';
-      ctx.fillRect(en.sx, en.y, en.w, en.h);
+      ctx.fillStyle = '#ff4400';
+      ctx.fillRect(esx, en.y, en.w, en.h);
     }
     ctx.restore();
   }
@@ -808,9 +840,9 @@ function drawTitle() {
 
   ctx.fillStyle = '#ccaaff';
   ctx.font      = '15px "Courier New"';
-  ctx.fillText('Ajude Vicente a chegar no mercado!', W / 2, H / 2 + 8);
-  ctx.fillText('Desvie dos slimes e não caia nos buracos.', W / 2, H / 2 + 30);
-  ctx.fillText('↑  ESPAÇO  ou  CLIQUE para pular', W / 2, H / 2 + 55);
+  ctx.fillText('Ajude Vicente a chegar no supermercado!', W / 2, H / 2 + 8);
+  ctx.fillText('← → ou A D para andar    ↑ / ESPAÇO para pular', W / 2, H / 2 + 30);
+  ctx.fillText('Desvie dos punks e não caia nos buracos.', W / 2, H / 2 + 55);
 
   if (bestTime) {
     ctx.fillStyle = '#ffcc00';
