@@ -216,6 +216,17 @@ function startGame() {
 }
 
 function resumeGame() {
+  // Recuar worldX até o jogador estar em chão seguro
+  const safeCheck = () => {
+    const plCx = worldX + PLAYER_X + PL.width / 2;
+    for (const h of holes) {
+      if (plCx > h.wx && plCx < h.wx + h.w) return false;
+    }
+    return true;
+  };
+  while (!safeCheck() && worldX > 0) worldX -= 10;
+  worldX = Math.max(0, worldX);
+
   state         = 'playing';
   PL.y          = GROUND_Y - PL.height;
   PL.vy         = 0;
@@ -325,7 +336,7 @@ function update(dt) {
 
   // ── Spawn enemies ─────────────────────────────────────
   spawnTick += dt;
-  if (spawnTick >= spawnRate) {
+  if (spawnTick >= spawnRate && enemies.length < 3) {
     spawnTick = 0;
     const jumping = Math.random() < 0.3;
     enemies.push({
@@ -345,10 +356,22 @@ function update(dt) {
 
     en.vy += GRAVITY;
     en.y  += en.vy;
-    if (en.y + en.h >= GROUND_Y) {
+
+    // Check if enemy is over a hole
+    const enCx = en.wx - worldX + en.w / 2;  // screen center X
+    let enOverHole = false;
+    for (const h of holes) {
+      const hs = h.wx - worldX, he = hs + h.w;
+      if (enCx > hs && enCx < he) { enOverHole = true; break; }
+    }
+
+    if (!enOverHole && en.y + en.h >= GROUND_Y) {
       en.y  = GROUND_Y - en.h;
       en.vy = 0;
     }
+
+    // Remove if fell into pit
+    if (en.y > H + 60) { enemies.splice(i, 1); continue; }
 
     en.tick += dt;
     if (en.tick > 0.13) { en.tick = 0; en.frame = (en.frame + 1) % 4; }
@@ -356,8 +379,8 @@ function update(dt) {
     // Screen position
     const esx = en.wx - worldX;
 
-    // Remove if far off screen (behind player by 2 screens)
-    if (esx < -500) { enemies.splice(i, 1); continue; }
+    // Remove if off screen (behind or far ahead — player may have backed up)
+    if (esx < -200 || esx > W + 400) { enemies.splice(i, 1); continue; }
 
     // Collision (only from the right side of the player)
     if (PL.invincible <= 0) {
