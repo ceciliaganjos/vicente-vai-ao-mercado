@@ -80,7 +80,6 @@ for (let i = 1; i <= 4; i++)
 loadImg('bgSky',      'imagens/Packs/Miami-synth-files/Layers/back.png');
 loadImg('bgBuildings','imagens/Packs/Miami-synth-files/Layers/buildings.png');
 loadImg('bgNeon',     'imagens/Packs/Streets of Fight/Stage Layers/back.png');
-loadImg('groundImg',  'imagens/Packs/Miami-synth-files/Layers/highway.png');
 
 // ─────────────────────────────────────────────────────────
 //  GAME STATE
@@ -497,41 +496,43 @@ function drawGround() {
     segs = next;
   }
 
-  const gImg = IMG['groundImg'];
+  const scrollOff = worldX % 80;
+
   for (const seg of segs) {
     if (seg.e <= seg.s) continue;
     const x = seg.s, w = seg.e - seg.s;
 
-    if (gImg && gImg.complete && gImg.naturalWidth > 0) {
-      // Tile the Miami highway image as the ground
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(x, GROUND_Y, w, H - GROUND_Y);
-      ctx.clip();
-      const gh = H - GROUND_Y;
-      const gw = gImg.naturalWidth * (gh / gImg.naturalHeight);
-      const scrollOff = (worldX * 0.5) % gw;
-      for (let tx = x - scrollOff; tx < x + w + gw; tx += gw) {
-        ctx.drawImage(gImg, tx, GROUND_Y, gw, gh);
-      }
-      ctx.restore();
-    } else {
-      // Fallback: asphalt
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(x, GROUND_Y, w, H - GROUND_Y);
-      // Sidewalk top strip
-      ctx.fillStyle = '#4a3a6e';
-      ctx.fillRect(x, GROUND_Y, w, 10);
-      ctx.fillStyle = '#6a5a8e';
-      ctx.fillRect(x, GROUND_Y, w, 3);
-      // Road lines
-      ctx.fillStyle = '#ffcc00';
-      ctx.globalAlpha = 0.6;
-      for (let lx = x; lx < x + w; lx += 60) {
-        ctx.fillRect(lx - (worldX * 0.5 % 60), GROUND_Y + 50, 36, 5);
-      }
-      ctx.globalAlpha = 1;
+    // ── Calçada (topo, 18px) ──────────────────────────
+    ctx.fillStyle = '#5a5a72';
+    ctx.fillRect(x, GROUND_Y, w, 18);
+
+    // Juntas das pedras da calçada
+    ctx.fillStyle = '#3a3a50';
+    for (let tx = x - (scrollOff % 40); tx < x + w; tx += 40) {
+      ctx.fillRect(tx, GROUND_Y, 1, 18);
     }
+    ctx.fillRect(x, GROUND_Y + 9, w, 1);
+
+    // Meio-fio
+    ctx.fillStyle = '#cccccc';
+    ctx.fillRect(x, GROUND_Y + 17, w, 3);
+
+    // ── Asfalto ───────────────────────────────────────
+    ctx.fillStyle = '#2a2a35';
+    ctx.fillRect(x, GROUND_Y + 20, w, H - GROUND_Y - 20);
+
+    // Faixa central amarela tracejada
+    const dashLen = 36, dashGap = 24, dashY = GROUND_Y + 48;
+    ctx.fillStyle = '#aaaa00';
+    for (let tx = x - (scrollOff % (dashLen + dashGap)); tx < x + w; tx += dashLen + dashGap) {
+      const dx = Math.max(tx, x);
+      const dw2 = Math.min(tx + dashLen, x + w) - dx;
+      if (dw2 > 0) ctx.fillRect(dx, dashY, dw2, 4);
+    }
+
+    // Faixa lateral superior
+    ctx.fillStyle = '#555566';
+    ctx.fillRect(x, GROUND_Y + 20, w, 2);
   }
 
   // Holes – glowing orange (open manhole / construction)
