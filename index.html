@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Vicente Vai ao Mercado</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #050510;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 3px solid #00ffee;
+      box-shadow: 0 0 30px #00ffee55, 0 0 60px #ff00aa33;
+    }
+    #subtitle {
+      color: #00ccbb;
+      font-size: 13px;
+      margin-top: 8px;
+      letter-spacing: 2px;
+    }
+  </style>
+</head>
+<body>
+<canvas id="game" width="800" height="400"></canvas>
+<div id="subtitle">↑ / ESPAÇO / CLIQUE para pular</div>
+
+<script>
+// ─────────────────────────────────────────────────────────
+//  CONSTANTS
+// ─────────────────────────────────────────────────────────
+const W = 800, H = 400;
+const GROUND_Y    = 320;   // top of ground surface
+const GRAVITY     = 0.42;
+const JUMP_FORCE  = -16;
+const BASE_SPEED  = 210;   // world scroll px/s
+const WORLD_LEN   = 6000;  // total world distance
+const PLAYER_X    = 140;   // fixed screen X
+
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+
+// ─────────────────────────────────────────────────────────
+//  IMAGE LOADER
+// ─────────────────────────────────────────────────────────
+const IMG = {};
+let loaded = 0, total = 0;
+
+function loadImg(key, src) {
+  total++;
+  const img = new Image();
+  img.onload  = () => loaded++;
+  img.onerror = () => { loaded++; console.warn('Missing:', src); };
+  img.src = src;
+  IMG[key] = img;
+}
+
+// Player – Bridge Heroine
+for (let i = 1; i <= 7; i++)
+  loadImg(`run${i}`, `imagens/Characters/Bridge Heroine/Heroine base/Sprites/run/player-run-${i}.png`);
+for (let i = 1; i <= 4; i++)
+  loadImg(`idle${i}`, `imagens/Characters/Bridge Heroine/Heroine base/Sprites/idle/player-idle-${i}.png`);
+for (let i = 1; i <= 4; i++)
+  loadImg(`jump${i}`, `imagens/Characters/Bridge Heroine/Heroine base/Sprites/jump/player-jump-${i}.png`);
+
+// Enemy – Punk
+for (let i = 1; i <= 4; i++)
+  loadImg(`punk${i}`, `imagens/Packs/Streets of Fight/Sprites/Enemy-Punk/Walk/walk${i}.png`);
+
+// Environment – Miami Synth + Streets of Fight
+loadImg('bgSky',      'imagens/Packs/Miami-synth-files/Layers/back.png');
+loadImg('bgBuildings','imagens/Packs/Miami-synth-files/Layers/buildings.png');
+loadImg('bgNeon',     'imagens/Packs/Streets of Fight/Stage Layers/back.png');
+loadImg('groundImg',  'imagens/Packs/Miami-synth-files/Layers/highway.png');
+
+// ─────────────────────────────────────────────────────────
+//  GAME STATE
+// ─────────────────────────────────────────────────────────
+let state    = 'loading';   // loading | title | playing | dead | win
+let worldX   = 0;
+let timer    = 0;
+let bestTime = null;
+let lives    = 3;
+let speed    = BASE_SPEED;
+
+// Player object
+const PL = {
+  y: GROUND_Y - 72,
+  vy: 0,
+  onGround: true,
+  anim: 'run',   // run | idle | jump
+  frame: 0,
+  frameTick: 0,
+  invincible: 0,
+  width:  38,
+  height: 60,
+};
+
+function playerTop()    { return PL.y; }
+function playerBottom() { return PL.y + PL.height; }
+
+// Obstacles
+let enemies   = [];
+let spawnTick = 0;
+let spawnRate = 2.4;   // seconds between spawns
+
+// Holes in ground [{wx, w}]
+let holes = [];
+
+// Coins (collectibles)
+let coins = [];
+let score = 0;
+
+// Particles
+let particles = [];
+
+// Stars (background decoration)
+const STARS = [];
+for (let i = 0; i < 60; i++) {
+  STARS.push({ x: Math.random() * W, y: Math.random() * GROUND_Y * 0.6, r: Math.random() * 1.5 + 0.3 });
+}
+
+// ─────────────────────────────────────────────────────────
+//  INPUT
+// ─────────────────────────────────────────────────────────
+const KEYS = {};
+document.addEventListener('keydown', e => {
+  KEYS[e.code] = true;
+  if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) {
+    e.preventDefault();
+    onJumpPress();
+  }
+  if (['Enter', 'Space'].includes(e.code)) {
+    onAction();
+  }
+});
+document.addEventListener('keyup', e => { KEYS[e.code] = false; });
+canvas.addEventListener('pointerdown', () => {
+  onJumpPress();
+  onAction();
+});
+
+function onJumpPress() {
+  if (state !== 'playing') return;
+  if (PL.onGround) {
+    PL.vy = JUMP_FORCE;
+    PL.onGround = false;
+    PL.anim = 'jump';
+    PL.frame = 0;
+  }
+}
+
+function onAction() {
+  if (state === 'title') { startGame(); return; }
+  if (state === 'dead')  { lives > 0 ? resumeGame() : startGame(); return; }
+  if (state === 'win')   { startGame(); }
+}
+
+// ─────────────────────────────────────────────────────────
+//  LEVEL GENERATION
+// ─────────────────────────────────────────────────────────
+function makeHoles() {
+  const arr = [];
+  let x = 900;
+  while (x < WORLD_LEN - 400) {
+    const w = 70 + Math.random() * 60;
+    arr.push({ wx: x, w });
+    x += 350 + Math.random() * 350;
+  }
+  return arr;
+}
+
+function makeCoins() {
+  const arr = [];
+  // Coins appear above the path
+  for (let wx = 400; wx < WORLD_LEN - 200; wx += 220 + Math.random() * 180) {
+    const y = GROUND_Y - 80 - Math.random() * 60;
+    arr.push({ wx, y, collected: false });
+  }
+  return arr;
+}
+
+// ─────────────────────────────────────────────────────────
+//  GAME LIFECYCLE
+// ─────────────────────────────────────────────────────────
+function startGame() {
+  state      = 'playing';
+  worldX     = 0;
+  timer      = 0;
+  lives      = 3;
+  score      = 0;
+  speed      = BASE_SPEED;
+  enemies    = [];
+  spawnTick  = 0;
+  spawnRate  = 2.4;
+  particles  = [];
+  holes      = makeHoles();
+  coins      = makeCoins();
+
+  PL.y         = GROUND_Y - PL.height;
+  PL.vy        = 0;
+  PL.onGround  = true;
+  PL.anim      = 'run';
+  PL.frame     = 0;
+  PL.frameTick = 0;
+  PL.invincible = 0;
+}
+
+function resumeGame() {
+  state         = 'playing';
+  PL.y          = GROUND_Y - PL.height;
+  PL.vy         = 0;
+  PL.onGround   = true;
+  PL.anim       = 'run';
+  PL.invincible = 2.5;
+  enemies       = [];
+  spawnTick     = 0;
+}
+
+function killPlayer() {
+  spawnParticles(PLAYER_X + PL.width / 2, PL.y + PL.height / 2, '#ff5566', 18);
+  lives--;
+  state = 'dead';
+}
+
+function spawnParticles(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 9,
+      vy: -Math.random() * 9 - 1,
+      life: 1.0,
+      color,
+      size: Math.random() * 5 + 2,
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  UPDATE
+// ─────────────────────────────────────────────────────────
+function update(dt) {
+  if (state !== 'playing') return;
+
+  // World progress
+  worldX += speed * dt;
+  timer  += dt;
+  speed   = BASE_SPEED + Math.min(timer * 6, 120);
+
+  // Win check
+  if (worldX >= WORLD_LEN) {
+    if (!bestTime || timer < bestTime) bestTime = timer;
+    spawnParticles(W / 2, H / 2, '#ffcc00', 35);
+    state = 'win';
+    return;
+  }
+
+  // Spawn difficulty
+  spawnRate = Math.max(0.9, 2.4 - timer * 0.04);
+
+  // ── Player physics ────────────────────────────────────
+  PL.vy += GRAVITY;
+  PL.y  += PL.vy;
+
+  // Ground collision or hole?
+  const plCx   = worldX + PLAYER_X + PL.width / 2;
+  let overHole = false;
+  for (const h of holes) {
+    if (plCx > h.wx && plCx < h.wx + h.w) { overHole = true; break; }
+  }
+
+  if (!overHole && playerBottom() >= GROUND_Y) {
+    PL.y         = GROUND_Y - PL.height;
+    PL.vy        = 0;
+    PL.onGround  = true;
+    if (PL.anim === 'jump') { PL.anim = 'run'; PL.frame = 0; }
+  } else {
+    PL.onGround = false;
+    if (PL.y > H + 80 && PL.invincible <= 0) {
+      killPlayer();
+      return;
+    }
+  }
+
+  // ── Player animation ──────────────────────────────────
+  PL.frameTick += dt;
+  const speeds = { run: 0.07, jump: 0.10, idle: 0.18 };
+  const counts = { run: 7,    jump: 4,    idle: 4     };
+  if (PL.frameTick > speeds[PL.anim]) {
+    PL.frameTick = 0;
+    PL.frame = (PL.frame + 1) % counts[PL.anim];
+  }
+
+  if (PL.invincible > 0) PL.invincible -= dt;
+
+  // ── Spawn enemies ─────────────────────────────────────
+  spawnTick += dt;
+  if (spawnTick >= spawnRate) {
+    spawnTick = 0;
+    const jumping = Math.random() < 0.3;
+    enemies.push({
+      sx: W + 64,   // screen X
+      y:  GROUND_Y - 56,
+      vy: jumping ? -(8 + Math.random() * 3) : 0,
+      frame: 0,
+      tick:  0,
+      w: 48, h: 56,
+    });
+  }
+
+  // ── Update enemies ────────────────────────────────────
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const en = enemies[i];
+    en.sx -= (speed + 55) * dt;
+
+    en.vy += GRAVITY;
+    en.y  += en.vy;
+    if (en.y + en.h >= GROUND_Y) {
+      en.y  = GROUND_Y - en.h;
+      en.vy = 0;
+    }
+
+    en.tick += dt;
+    if (en.tick > 0.13) { en.tick = 0; en.frame = (en.frame + 1) % 4; }
+
+    // Off screen
+    if (en.sx < -100) { enemies.splice(i, 1); continue; }
+
+    // Collision
+    if (PL.invincible <= 0) {
+      const margin = 10;
+      const px = PLAYER_X + margin, py = PL.y + margin;
+      const pw = PL.width - margin * 2, ph = PL.height - margin;
+      const ex = en.sx + 6, ey = en.y + 8, ew = en.w - 12, eh = en.h - 8;
+      if (px < ex + ew && px + pw > ex && py < ey + eh && py + ph > ey) {
+        enemies.splice(i, 1);
+        killPlayer();
+        return;
+      }
+    }
+  }
+
+  // ── Collect coins ─────────────────────────────────────
+  for (const c of coins) {
+    if (c.collected) continue;
+    const cx = c.wx - worldX;
+    if (Math.abs(cx - PLAYER_X) < 40 && Math.abs(c.y - PL.y) < 50) {
+      c.collected = true;
+      score++;
+      spawnParticles(cx, c.y, '#ffee22', 6);
+    }
+  }
+
+  // ── Particles ─────────────────────────────────────────
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x    += p.vx;
+    p.y    += p.vy;
+    p.vy   += 0.25;
+    p.life -= dt * 1.8;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW HELPERS
+// ─────────────────────────────────────────────────────────
+function drawImg(key, x, y, scale) {
+  const img = IMG[key];
+  if (img && img.complete && img.naturalWidth > 0) {
+    ctx.drawImage(img, x, y, img.naturalWidth * scale, img.naturalHeight * scale);
+    return true;
+  }
+  return false;
+}
+
+function drawTiledImg(key, scrollRatio, targetH, bottomY) {
+  const img = IMG[key];
+  if (!img || !img.complete || !img.naturalWidth) return;
+  const scale = targetH / img.naturalHeight;
+  const tw    = img.naturalWidth * scale;
+  const tx    = -(worldX * scrollRatio) % tw;
+  const dy    = bottomY - targetH;
+  for (let x = tx - tw; x < W + tw; x += tw) {
+    ctx.drawImage(img, x, dy, tw, targetH);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – BACKGROUND
+// ─────────────────────────────────────────────────────────
+function drawBackground() {
+  // Sky – Miami synth gradient fallback
+  const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+  grad.addColorStop(0,   '#120030');
+  grad.addColorStop(0.5, '#2a006e');
+  grad.addColorStop(1,   '#00044a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, GROUND_Y);
+
+  // Layer 1: Miami sky (purple mountains, slowest)
+  drawTiledImg('bgSky', 0.03, GROUND_Y * 0.92, GROUND_Y);
+
+  // Layer 2: neon city skyline (Streets of Fight, medium)
+  drawTiledImg('bgNeon', 0.12, GROUND_Y * 0.58, GROUND_Y);
+
+  // Layer 3: Miami buildings silhouette (faster)
+  drawTiledImg('bgBuildings', 0.22, GROUND_Y * 0.50, GROUND_Y);
+
+  // Stars / dots on top
+  for (const s of STARS) {
+    const twinkle = 0.4 + 0.6 * Math.sin(Date.now() * 0.0018 + s.x);
+    ctx.globalAlpha = twinkle * 0.6;
+    ctx.fillStyle = s.x % 3 === 0 ? '#00ffee' : '#ff88cc';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – GROUND
+// ─────────────────────────────────────────────────────────
+function drawGround() {
+  // Void/sewer below
+  ctx.fillStyle = '#05000f';
+  ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+
+  // Build solid segments (excluding holes)
+  let segs = [{ s: 0, e: W }];
+  for (const h of holes) {
+    const hs = h.wx - worldX;
+    const he = hs + h.w;
+    if (he < 0 || hs > W) continue;
+    const next = [];
+    for (const seg of segs) {
+      if (hs > seg.s) next.push({ s: seg.s, e: Math.min(hs, seg.e) });
+      if (he < seg.e) next.push({ s: Math.max(he, seg.s), e: seg.e });
+    }
+    segs = next;
+  }
+
+  const gImg = IMG['groundImg'];
+  for (const seg of segs) {
+    if (seg.e <= seg.s) continue;
+    const x = seg.s, w = seg.e - seg.s;
+
+    if (gImg && gImg.complete && gImg.naturalWidth > 0) {
+      // Tile the Miami highway image as the ground
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, GROUND_Y, w, H - GROUND_Y);
+      ctx.clip();
+      const gh = H - GROUND_Y;
+      const gw = gImg.naturalWidth * (gh / gImg.naturalHeight);
+      const scrollOff = (worldX * 0.5) % gw;
+      for (let tx = x - scrollOff; tx < x + w + gw; tx += gw) {
+        ctx.drawImage(gImg, tx, GROUND_Y, gw, gh);
+      }
+      ctx.restore();
+    } else {
+      // Fallback: asphalt
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(x, GROUND_Y, w, H - GROUND_Y);
+      // Sidewalk top strip
+      ctx.fillStyle = '#4a3a6e';
+      ctx.fillRect(x, GROUND_Y, w, 10);
+      ctx.fillStyle = '#6a5a8e';
+      ctx.fillRect(x, GROUND_Y, w, 3);
+      // Road lines
+      ctx.fillStyle = '#ffcc00';
+      ctx.globalAlpha = 0.6;
+      for (let lx = x; lx < x + w; lx += 60) {
+        ctx.fillRect(lx - (worldX * 0.5 % 60), GROUND_Y + 50, 36, 5);
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Holes – glowing orange (open manhole / construction)
+  for (const h of holes) {
+    const hs = h.wx - worldX;
+    const he = hs + h.w;
+    if (he < 0 || hs > W) continue;
+
+    // Orange glow edges
+    const glow = 0.6 + 0.4 * Math.sin(Date.now() * 0.005);
+    ctx.fillStyle = `rgba(255, 140, 0, ${glow})`;
+    ctx.fillRect(Math.max(0, hs) - 3, GROUND_Y, 5, 14);
+    ctx.fillRect(Math.min(W, he) - 2, GROUND_Y, 5, 14);
+
+    // Pit depth gradient
+    const pitGrad = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+    pitGrad.addColorStop(0, 'rgba(255, 80, 0, 0.2)');
+    pitGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = pitGrad;
+    ctx.fillRect(Math.max(0, hs), GROUND_Y, Math.min(W, he) - Math.max(0, hs), H - GROUND_Y);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – MARKET (goal)
+// ─────────────────────────────────────────────────────────
+function drawMarket(sx) {
+  const bw = 240, bh = 200;
+  const bx = sx, by = GROUND_Y - bh;
+
+  // Building body – concrete modern
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(bx, by, bw, bh);
+
+  // Facade panels
+  ctx.fillStyle = '#22223a';
+  for (let py = by + 10; py < GROUND_Y; py += 40) {
+    ctx.fillRect(bx + 8, py, bw - 16, 28);
+  }
+
+  // Flat roof
+  ctx.fillStyle = '#0d0d1e';
+  ctx.fillRect(bx - 10, by - 8, bw + 20, 14);
+
+  // Rooftop AC units
+  ctx.fillStyle = '#2a2a44';
+  ctx.fillRect(bx + 20, by - 22, 35, 18);
+  ctx.fillRect(bx + bw - 55, by - 22, 35, 18);
+  // AC vents
+  ctx.fillStyle = '#444466';
+  for (let v = 0; v < 5; v++) {
+    ctx.fillRect(bx + 22 + v * 6, by - 20, 4, 14);
+    ctx.fillRect(bx + bw - 53 + v * 6, by - 20, 4, 14);
+  }
+
+  // Big storefront windows (lit cyan)
+  const winFlicker = 0.9 + 0.1 * Math.sin(Date.now() * 0.002);
+  ctx.fillStyle = `rgba(0, 220, 255, ${winFlicker * 0.25})`;
+  ctx.fillRect(bx + 10, by + 20, bw - 20, 80);
+  ctx.strokeStyle = `rgba(0, 220, 255, ${winFlicker * 0.8})`;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx + 10, by + 20, bw - 20, 80);
+
+  // Window grid
+  ctx.strokeStyle = `rgba(0, 180, 220, 0.4)`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let gx = bx + 10; gx <= bx + bw - 10; gx += 40) {
+    ctx.moveTo(gx, by + 20); ctx.lineTo(gx, by + 100);
+  }
+  ctx.moveTo(bx + 10, by + 60); ctx.lineTo(bx + bw - 10, by + 60);
+  ctx.stroke();
+
+  // Automatic doors
+  const doorW = 60;
+  ctx.fillStyle = `rgba(0, 200, 255, 0.15)`;
+  ctx.fillRect(bx + bw / 2 - doorW / 2, GROUND_Y - 90, doorW, 90);
+  ctx.strokeStyle = `rgba(0, 200, 255, 0.7)`;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx + bw / 2 - doorW / 2, GROUND_Y - 90, doorW / 2, 90);
+  ctx.strokeRect(bx + bw / 2, GROUND_Y - 90, doorW / 2, 90);
+
+  // NEON SIGN – main
+  const pulse = 0.75 + 0.25 * Math.sin(Date.now() * 0.006);
+  ctx.save();
+  ctx.shadowColor = '#00ffee';
+  ctx.shadowBlur  = 18 * pulse;
+  ctx.fillStyle   = `rgba(0, 255, 238, ${pulse})`;
+  ctx.fillRect(bx + 15, by + 6, bw - 30, 22);
+  ctx.fillStyle = '#001a18';
+  ctx.font = 'bold 13px "Courier New"';
+  ctx.textAlign = 'center';
+  ctx.fillText('SUPER MERCADO', bx + bw / 2, by + 22);
+  ctx.restore();
+
+  // Side neon strips
+  const p2 = 0.6 + 0.4 * Math.sin(Date.now() * 0.004 + 1);
+  ctx.save();
+  ctx.shadowColor = '#ff00aa';
+  ctx.shadowBlur  = 12 * p2;
+  ctx.fillStyle   = `rgba(255, 0, 170, ${p2})`;
+  ctx.fillRect(bx, by, 5, bh);
+  ctx.fillRect(bx + bw - 5, by, 5, bh);
+  ctx.restore();
+
+  // Street-level lights
+  drawStreetLight(bx - 15, GROUND_Y);
+  drawStreetLight(bx + bw + 5, GROUND_Y);
+}
+
+function drawStreetLight(x, groundY) {
+  // Pole
+  ctx.fillStyle = '#3a3a5e';
+  ctx.fillRect(x - 3, groundY - 120, 6, 120);
+  // Arm
+  ctx.fillStyle = '#3a3a5e';
+  ctx.fillRect(x - 3, groundY - 120, 28, 5);
+  // Lamp housing
+  ctx.fillStyle = '#555577';
+  ctx.fillRect(x + 18, groundY - 130, 20, 15);
+  // Light glow
+  const glow = 0.7 + 0.3 * Math.sin(Date.now() * 0.003 + x);
+  ctx.save();
+  ctx.shadowColor = '#ffeeaa';
+  ctx.shadowBlur  = 20 * glow;
+  ctx.fillStyle   = `rgba(255, 230, 120, ${glow})`;
+  ctx.fillRect(x + 20, groundY - 128, 16, 10);
+  // Cone of light
+  ctx.globalAlpha = glow * 0.12;
+  ctx.fillStyle   = '#ffeeaa';
+  ctx.beginPath();
+  ctx.moveTo(x + 28, groundY - 118);
+  ctx.lineTo(x - 20, groundY);
+  ctx.lineTo(x + 75, groundY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – COINS
+// ─────────────────────────────────────────────────────────
+function drawCoins() {
+  const t = Date.now() * 0.004;
+  for (const c of coins) {
+    if (c.collected) continue;
+    const sx = c.wx - worldX;
+    if (sx < -30 || sx > W + 30) continue;
+    const bob = Math.sin(t + c.wx * 0.01) * 4;
+
+    ctx.save();
+    ctx.shadowColor = '#ffee22';
+    ctx.shadowBlur  = 8;
+    ctx.fillStyle   = '#ffcc00';
+    ctx.beginPath();
+    ctx.arc(sx, c.y + bob, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffe855';
+    ctx.beginPath();
+    ctx.arc(sx - 2, c.y + bob - 2, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – PLAYER
+// ─────────────────────────────────────────────────────────
+function drawPlayer() {
+  if (PL.invincible > 0 && Math.floor(PL.invincible * 12) % 2 === 0) return;
+
+  ctx.save();
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(PLAYER_X + PL.width / 2, GROUND_Y + 4, 22, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const SCALE = 2.2;
+  const suffix = PL.frame + 1;
+  const key    = PL.anim + suffix;
+  const img    = IMG[key];
+
+  if (img && img.complete && img.naturalWidth > 0) {
+    const dw = img.naturalWidth  * SCALE;
+    const dh = img.naturalHeight * SCALE;
+    // Center horizontally, align bottom to player bottom
+    const dx = PLAYER_X + PL.width / 2 - dw / 2;
+    const dy = PL.y + PL.height - dh;
+    ctx.drawImage(img, dx, dy, dw, dh);
+  } else {
+    ctx.fillStyle = '#ff6688';
+    ctx.fillRect(PLAYER_X, PL.y, PL.width, PL.height);
+    ctx.fillStyle = '#ffaacc';
+    ctx.fillRect(PLAYER_X + 8, PL.y + 4, 22, 22);
+  }
+
+  ctx.restore();
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – ENEMIES
+// ─────────────────────────────────────────────────────────
+function drawEnemies() {
+  for (const en of enemies) {
+    ctx.save();
+
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(en.sx + en.w / 2, GROUND_Y + 4, 18, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const SCALE = 1.9;
+    const img   = IMG[`punk${en.frame + 1}`];
+    if (img && img.complete && img.naturalWidth > 0) {
+      const dw = img.naturalWidth  * SCALE;
+      const dh = img.naturalHeight * SCALE;
+      ctx.drawImage(img, en.sx + en.w / 2 - dw / 2, en.y + en.h - dh, dw, dh);
+    } else {
+      ctx.fillStyle = '#44dd44';
+      ctx.fillRect(en.sx, en.y, en.w, en.h);
+    }
+    ctx.restore();
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – PARTICLES
+// ─────────────────────────────────────────────────────────
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle   = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – HUD
+// ─────────────────────────────────────────────────────────
+function drawHUD() {
+  // Top bar
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, W, 38);
+
+  // Timer
+  ctx.fillStyle = '#ffee44';
+  ctx.font = 'bold 17px "Courier New"';
+  ctx.textAlign = 'left';
+  ctx.fillText(`TEMPO: ${timer.toFixed(1)}s`, 10, 24);
+
+  // Score
+  ctx.fillStyle = '#ffcc00';
+  ctx.font = 'bold 15px "Courier New"';
+  ctx.fillText(`★ ${score}`, 200, 24);
+
+  // Lives
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ff4488';
+  ctx.font = 'bold 18px "Courier New"';
+  ctx.fillText('♥ '.repeat(lives), W - 10, 24);
+
+  // Progress bar
+  const pct    = Math.min(worldX / WORLD_LEN, 1);
+  const barX   = W / 2 - 160;
+  const barW   = 320;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(barX, 8, barW, 14);
+
+  const barGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+  barGrad.addColorStop(0, '#00ffee');
+  barGrad.addColorStop(1, '#ff00aa');
+  ctx.fillStyle = barGrad;
+  ctx.fillRect(barX, 8, barW * pct, 14);
+
+  ctx.strokeStyle = '#7a4a9e';
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(barX, 8, barW, 14);
+
+  // Market icon on bar
+  ctx.fillStyle = '#ffcc00';
+  ctx.font      = '11px "Courier New"';
+  ctx.textAlign = 'center';
+  ctx.fillText('[MERCADO]', barX + barW + 40, 20);
+}
+
+// ─────────────────────────────────────────────────────────
+//  DRAW – SCREENS
+// ─────────────────────────────────────────────────────────
+function drawTitle() {
+  ctx.fillStyle = 'rgba(5,0,20,0.82)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Decorative border
+  ctx.strokeStyle = '#7a3aae';
+  ctx.lineWidth   = 3;
+  ctx.strokeRect(20, 20, W - 40, H - 40);
+  ctx.strokeStyle = '#3a1a5e';
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(25, 25, W - 50, H - 50);
+
+  ctx.textAlign = 'center';
+
+  // Title
+  ctx.fillStyle = '#ffcc00';
+  ctx.font      = 'bold 42px "Courier New"';
+  ctx.fillText('VICENTE', W / 2, H / 2 - 75);
+
+  ctx.fillStyle = '#aa66ff';
+  ctx.font      = 'bold 28px "Courier New"';
+  ctx.fillText('VAI AO MERCADO', W / 2, H / 2 - 32);
+
+  // Divider
+  ctx.fillStyle = '#5a2a8e';
+  ctx.fillRect(W / 2 - 140, H / 2 - 18, 280, 2);
+
+  ctx.fillStyle = '#ccaaff';
+  ctx.font      = '15px "Courier New"';
+  ctx.fillText('Ajude Vicente a chegar no mercado!', W / 2, H / 2 + 8);
+  ctx.fillText('Desvie dos slimes e não caia nos buracos.', W / 2, H / 2 + 30);
+  ctx.fillText('↑  ESPAÇO  ou  CLIQUE para pular', W / 2, H / 2 + 55);
+
+  if (bestTime) {
+    ctx.fillStyle = '#ffcc00';
+    ctx.font      = 'bold 15px "Courier New"';
+    ctx.fillText(`★ Recorde: ${bestTime.toFixed(1)}s`, W / 2, H / 2 + 85);
+  }
+
+  // Blink start
+  if (Math.floor(Date.now() / 550) % 2) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font      = 'bold 18px "Courier New"';
+    ctx.fillText('── ENTER ou CLIQUE para começar ──', W / 2, H / 2 + 115);
+  }
+}
+
+function drawDead() {
+  ctx.fillStyle = 'rgba(0,0,0,0.78)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = '#ff4488';
+  ctx.font      = 'bold 44px "Courier New"';
+  ctx.fillText('GAME OVER', W / 2, H / 2 - 60);
+
+  if (lives > 0) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font      = '20px "Courier New"';
+    ctx.fillText(`Vidas restantes: ${'♥ '.repeat(lives)}`, W / 2, H / 2 - 10);
+
+    if (Math.floor(Date.now() / 550) % 2) {
+      ctx.fillStyle = '#aaaaff';
+      ctx.font      = '17px "Courier New"';
+      ctx.fillText('ENTER ou CLIQUE para continuar', W / 2, H / 2 + 30);
+    }
+  } else {
+    ctx.fillStyle = '#aa66ff';
+    ctx.font      = '18px "Courier New"';
+    ctx.fillText('Sem vidas! Tente de novo.', W / 2, H / 2 - 10);
+
+    if (Math.floor(Date.now() / 550) % 2) {
+      ctx.fillStyle = '#aaaaff';
+      ctx.font      = '17px "Courier New"';
+      ctx.fillText('ENTER ou CLIQUE para recomeçar', W / 2, H / 2 + 30);
+    }
+  }
+}
+
+function drawWin() {
+  ctx.fillStyle = 'rgba(5,0,20,0.80)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Border
+  ctx.strokeStyle = '#ffcc00';
+  ctx.lineWidth   = 3;
+  ctx.strokeRect(30, 30, W - 60, H - 60);
+
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = '#ffcc00';
+  ctx.font      = 'bold 36px "Courier New"';
+  ctx.fillText('★ CHEGOU NO MERCADO! ★', W / 2, H / 2 - 65);
+
+  ctx.fillStyle = '#44ff88';
+  ctx.font      = 'bold 30px "Courier New"';
+  ctx.fillText(`Tempo: ${timer.toFixed(1)}s`, W / 2, H / 2 - 15);
+
+  if (score > 0) {
+    ctx.fillStyle = '#ffcc00';
+    ctx.font      = '18px "Courier New"';
+    ctx.fillText(`Moedas coletadas: ${score}`, W / 2, H / 2 + 18);
+  }
+
+  if (bestTime !== null) {
+    if (Math.abs(timer - bestTime) < 0.01) {
+      ctx.fillStyle = '#ffcc00';
+      ctx.font      = 'bold 17px "Courier New"';
+      ctx.fillText('★ NOVO RECORDE! ★', W / 2, H / 2 + 48);
+    } else {
+      ctx.fillStyle = '#ccaaff';
+      ctx.font      = '16px "Courier New"';
+      ctx.fillText(`Melhor tempo: ${bestTime.toFixed(1)}s`, W / 2, H / 2 + 48);
+    }
+  }
+
+  if (Math.floor(Date.now() / 550) % 2) {
+    ctx.fillStyle = '#aaaaff';
+    ctx.font      = '16px "Courier New"';
+    ctx.fillText('ENTER ou CLIQUE para jogar de novo', W / 2, H / 2 + 90);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  MAIN LOOP
+// ─────────────────────────────────────────────────────────
+let last = 0;
+
+function loop(ts) {
+  const dt = Math.min((ts - last) / 1000, 0.05);
+  last = ts;
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (state === 'loading') {
+    ctx.fillStyle = '#0d0014';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#7a4aae';
+    ctx.font      = '20px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Carregando sprites... ${loaded}/${total}`, W / 2, H / 2);
+
+    // Progress bar
+    ctx.fillStyle = '#2a1040';
+    ctx.fillRect(W / 2 - 150, H / 2 + 20, 300, 14);
+    ctx.fillStyle = '#7a4aae';
+    ctx.fillRect(W / 2 - 150, H / 2 + 20, 300 * (loaded / total), 14);
+
+    if (loaded >= total) state = 'title';
+  } else {
+    // Always draw world
+    drawBackground();
+    drawCoins();
+    drawGround();
+
+    const marketSx = WORLD_LEN - worldX - 10;
+    if (marketSx < W + 250) drawMarket(marketSx);
+
+    drawPlayer();
+    drawEnemies();
+    drawParticles();
+
+    update(dt);
+
+    if (state === 'playing') drawHUD();
+    if (state === 'title')   drawTitle();
+    if (state === 'dead')    drawDead();
+    if (state === 'win')     drawWin();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
