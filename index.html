@@ -72,23 +72,35 @@ for (let i = 1; i <= 4; i++)
 for (let i = 1; i <= 4; i++)
   loadImg(`jump${i}`, `imagens/Characters/Bridge Heroine/Heroine base/Sprites/jump/player-jump-${i}.png`);
 
-// Enemy – Punk
+// Enemy – Fase 1: Punk
 for (let i = 1; i <= 4; i++)
   loadImg(`punk${i}`, `imagens/Packs/Streets of Fight/Sprites/Enemy-Punk/Walk/walk${i}.png`);
 
-// Environment – Miami Synth + Streets of Fight
+// Enemy – Fase 2: Cop
+for (let i = 1; i <= 10; i++)
+  loadImg(`cop${i}`, `imagens/Packs/Warped City/V2/Sprites/cop/run/cop${i}.png`);
+
+// Environment – Fase 1: Miami Synth + Streets of Fight
 loadImg('bgSky',      'imagens/Packs/Miami-synth-files/Layers/back.png');
 loadImg('bgBuildings','imagens/Packs/Miami-synth-files/Layers/buildings.png');
 loadImg('bgNeon',     'imagens/Packs/Streets of Fight/Stage Layers/back.png');
 
+// Environment – Fase 2: Warped City
+loadImg('bg2Back',   'imagens/Packs/Warped City/V2/Environmet/background/back.png');
+loadImg('bg2Middle', 'imagens/Packs/Warped City/V2/Environmet/background/middle.png');
+loadImg('bg2Front',  'imagens/Packs/Warped City/V1/warped city files/ENVIRONMENT/background/near-buildings-bg.png');
+
 // ─────────────────────────────────────────────────────────
 //  GAME STATE
 // ─────────────────────────────────────────────────────────
-let state    = 'loading';   // loading | title | playing | dead | win
+let state    = 'loading';   // loading | title | playing | phase_clear | dead | win
+let phase    = 1;
 let worldX   = 0;
 let timer    = 0;
+let totalTime = 0;  // acumula tempo entre fases
 let bestTime = null;
 let lives    = 3;
+let phaseTimer = 0; // temporizador da tela de transição
 
 // Player object
 const PL = {
@@ -159,9 +171,10 @@ function onJumpPress() {
 }
 
 function onAction() {
-  if (state === 'title') { startGame(); return; }
-  if (state === 'dead')  { lives > 0 ? resumeGame() : startGame(); return; }
-  if (state === 'win')   { startGame(); }
+  if (state === 'title')       { startGame(); return; }
+  if (state === 'dead')        { lives > 0 ? resumeGame() : startGame(); return; }
+  if (state === 'phase_clear') { startPhase2(); return; }
+  if (state === 'win')         { startGame(); }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -191,19 +204,7 @@ function makeCoins() {
 // ─────────────────────────────────────────────────────────
 //  GAME LIFECYCLE
 // ─────────────────────────────────────────────────────────
-function startGame() {
-  state      = 'playing';
-  worldX     = 0;
-  timer      = 0;
-  lives      = 3;
-  score      = 0;
-  enemies    = [];
-  spawnTick  = 0;
-  spawnRate  = 2.4;
-  particles  = [];
-  holes      = makeHoles();
-  coins      = makeCoins();
-
+function resetPlayer() {
   PL.y          = GROUND_Y - PL.height;
   PL.vy         = 0;
   PL.onGround   = true;
@@ -212,6 +213,37 @@ function startGame() {
   PL.frameTick  = 0;
   PL.invincible = 0;
   PL.facingLeft = false;
+}
+
+function startGame() {
+  phase      = 1;
+  state      = 'playing';
+  worldX     = 0;
+  timer      = 0;
+  totalTime  = 0;
+  lives      = 3;
+  score      = 0;
+  enemies    = [];
+  spawnTick  = 0;
+  spawnRate  = 2.4;
+  particles  = [];
+  holes      = makeHoles();
+  coins      = makeCoins();
+  resetPlayer();
+}
+
+function startPhase2() {
+  phase      = 2;
+  state      = 'playing';
+  worldX     = 0;
+  timer      = 0;
+  enemies    = [];
+  spawnTick  = 0;
+  spawnRate  = 2.0;   // começa mais difícil
+  particles  = [];
+  holes      = makeHoles();
+  coins      = makeCoins();
+  resetPlayer();
 }
 
 function resumeGame() {
@@ -280,16 +312,23 @@ function update(dt) {
   }
   worldX = Math.max(0, worldX);
 
-  // Win check
+  // Win / fase clear check
   if (worldX >= WORLD_LEN) {
-    if (!bestTime || timer < bestTime) bestTime = timer;
     spawnParticles(W / 2, H / 2, '#ffcc00', 35);
-    state = 'win';
+    if (phase === 1) {
+      totalTime = timer;
+      state = 'phase_clear';
+    } else {
+      const final = totalTime + timer;
+      if (!bestTime || final < bestTime) bestTime = final;
+      state = 'win';
+    }
     return;
   }
 
-  // Spawn difficulty scales with distance
-  spawnRate = Math.max(1.0, 2.4 - worldX * 0.0003);
+  // Dificuldade escala com distância (fase 2 começa mais difícil)
+  const baseRate = phase === 1 ? 2.4 : 1.8;
+  spawnRate = Math.max(phase === 1 ? 1.0 : 0.7, baseRate - worldX * 0.0003);
 
   // ── Player physics ────────────────────────────────────
   PL.vy += GRAVITY;
@@ -337,21 +376,25 @@ function update(dt) {
   spawnTick += dt;
   if (spawnTick >= spawnRate && enemies.length < 3) {
     spawnTick = 0;
-    const jumping = Math.random() < 0.3;
+    const jumping = phase === 1 ? Math.random() < 0.3 : Math.random() < 0.5;
+    const isCop = phase === 2;
     enemies.push({
-      wx:    worldX + W + 64,   // world X (enemies stored in world coords)
-      y:     GROUND_Y - 56,
-      vy:    jumping ? -(8 + Math.random() * 3) : 0,
-      frame: 0,
-      tick:  0,
-      w: 48, h: 56,
+      wx:        worldX + W + 64,
+      y:         GROUND_Y - 56,
+      vy:        jumping ? -(8 + Math.random() * 3) : 0,
+      frame:     0,
+      tick:      0,
+      w:         48, h: 56,
+      type:      isCop ? 'cop' : 'punk',
+      maxFrames: isCop ? 10 : 4,
+      speed:     isCop ? ENEMY_SPEED * 1.5 : ENEMY_SPEED,
     });
   }
 
   // ── Update enemies ────────────────────────────────────
   for (let i = enemies.length - 1; i >= 0; i--) {
     const en = enemies[i];
-    en.wx -= ENEMY_SPEED * dt;  // enemy walks left in world space
+    en.wx -= en.speed * dt;  // enemy walks left in world space
 
     en.vy += GRAVITY;
     en.y  += en.vy;
@@ -373,7 +416,7 @@ function update(dt) {
     if (en.y > H + 60) { enemies.splice(i, 1); continue; }
 
     en.tick += dt;
-    if (en.tick > 0.13) { en.tick = 0; en.frame = (en.frame + 1) % 4; }
+    if (en.tick > 0.10) { en.tick = 0; en.frame = (en.frame + 1) % en.maxFrames; }
 
     // Screen position
     const esx = en.wx - worldX;
@@ -445,33 +488,48 @@ function drawTiledImg(key, scrollRatio, targetH, bottomY) {
 //  DRAW – BACKGROUND
 // ─────────────────────────────────────────────────────────
 function drawBackground() {
-  // Sky – Miami synth gradient fallback
-  const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-  grad.addColorStop(0,   '#120030');
-  grad.addColorStop(0.5, '#2a006e');
-  grad.addColorStop(1,   '#00044a');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, GROUND_Y);
+  if (phase === 1) {
+    const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    grad.addColorStop(0,   '#120030');
+    grad.addColorStop(0.5, '#2a006e');
+    grad.addColorStop(1,   '#00044a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, GROUND_Y);
 
-  // Layer 1: Miami sky (purple mountains, slowest)
-  drawTiledImg('bgSky', 0.03, GROUND_Y * 0.92, GROUND_Y);
+    drawTiledImg('bgSky',       0.03, GROUND_Y * 0.92, GROUND_Y);
+    drawTiledImg('bgNeon',      0.12, GROUND_Y * 0.58, GROUND_Y);
+    drawTiledImg('bgBuildings', 0.22, GROUND_Y * 0.50, GROUND_Y);
 
-  // Layer 2: neon city skyline (Streets of Fight, medium)
-  drawTiledImg('bgNeon', 0.12, GROUND_Y * 0.58, GROUND_Y);
+    for (const s of STARS) {
+      const twinkle = 0.4 + 0.6 * Math.sin(Date.now() * 0.0018 + s.x);
+      ctx.globalAlpha = twinkle * 0.6;
+      ctx.fillStyle = s.x % 3 === 0 ? '#00ffee' : '#ff88cc';
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
 
-  // Layer 3: Miami buildings silhouette (faster)
-  drawTiledImg('bgBuildings', 0.22, GROUND_Y * 0.50, GROUND_Y);
+  } else {
+    // Fase 2 – Warped City: céu vermelho ameaçador
+    const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    grad.addColorStop(0,   '#1a0000');
+    grad.addColorStop(0.5, '#3a0010');
+    grad.addColorStop(1,   '#600020');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, GROUND_Y);
 
-  // Stars / dots on top
-  for (const s of STARS) {
-    const twinkle = 0.4 + 0.6 * Math.sin(Date.now() * 0.0018 + s.x);
-    ctx.globalAlpha = twinkle * 0.6;
-    ctx.fillStyle = s.x % 3 === 0 ? '#00ffee' : '#ff88cc';
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    ctx.fill();
+    drawTiledImg('bg2Back',   0.03, GROUND_Y * 0.90, GROUND_Y);
+    drawTiledImg('bg2Middle', 0.15, GROUND_Y * 0.55, GROUND_Y);
+    drawTiledImg('bg2Front',  0.28, GROUND_Y * 0.42, GROUND_Y);
+
+    // Estrelas vermelhas/laranja
+    for (const s of STARS) {
+      const twinkle = 0.4 + 0.6 * Math.sin(Date.now() * 0.002 + s.x);
+      ctx.globalAlpha = twinkle * 0.5;
+      ctx.fillStyle = s.x % 2 === 0 ? '#ff4400' : '#ff0055';
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
-  ctx.globalAlpha = 1;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -502,28 +560,29 @@ function drawGround() {
     if (seg.e <= seg.s) continue;
     const x = seg.s, w = seg.e - seg.s;
 
+    const isPhase2 = phase === 2;
+
     // ── Calçada (topo, 18px) ──────────────────────────
-    ctx.fillStyle = '#5a5a72';
+    ctx.fillStyle = isPhase2 ? '#3a2020' : '#5a5a72';
     ctx.fillRect(x, GROUND_Y, w, 18);
 
-    // Juntas das pedras da calçada
-    ctx.fillStyle = '#3a3a50';
+    ctx.fillStyle = isPhase2 ? '#2a1010' : '#3a3a50';
     for (let tx = x - (scrollOff % 40); tx < x + w; tx += 40) {
       ctx.fillRect(tx, GROUND_Y, 1, 18);
     }
     ctx.fillRect(x, GROUND_Y + 9, w, 1);
 
     // Meio-fio
-    ctx.fillStyle = '#cccccc';
+    ctx.fillStyle = isPhase2 ? '#cc3333' : '#cccccc';
     ctx.fillRect(x, GROUND_Y + 17, w, 3);
 
     // ── Asfalto ───────────────────────────────────────
-    ctx.fillStyle = '#2a2a35';
+    ctx.fillStyle = isPhase2 ? '#1a1010' : '#2a2a35';
     ctx.fillRect(x, GROUND_Y + 20, w, H - GROUND_Y - 20);
 
-    // Faixa central amarela tracejada
+    // Faixa central
     const dashLen = 36, dashGap = 24, dashY = GROUND_Y + 48;
-    ctx.fillStyle = '#aaaa00';
+    ctx.fillStyle = isPhase2 ? '#aa0000' : '#aaaa00';
     for (let tx = x - (scrollOff % (dashLen + dashGap)); tx < x + w; tx += dashLen + dashGap) {
       const dx = Math.max(tx, x);
       const dw2 = Math.min(tx + dashLen, x + w) - dx;
@@ -531,7 +590,7 @@ function drawGround() {
     }
 
     // Faixa lateral superior
-    ctx.fillStyle = '#555566';
+    ctx.fillStyle = isPhase2 ? '#552222' : '#555566';
     ctx.fillRect(x, GROUND_Y + 20, w, 2);
   }
 
@@ -756,13 +815,14 @@ function drawEnemies() {
     ctx.fill();
 
     const SCALE = 1.9;
-    const img   = IMG[`punk${en.frame + 1}`];
+    const imgKey = `${en.type}${en.frame + 1}`;
+    const img    = IMG[imgKey];
     if (img && img.complete && img.naturalWidth > 0) {
       const dw = img.naturalWidth  * SCALE;
       const dh = img.naturalHeight * SCALE;
       ctx.drawImage(img, esx + en.w / 2 - dw / 2, en.y + en.h - dh, dw, dh);
     } else {
-      ctx.fillStyle = '#ff4400';
+      ctx.fillStyle = en.type === 'cop' ? '#0044ff' : '#ff4400';
       ctx.fillRect(esx, en.y, en.w, en.h);
     }
     ctx.restore();
@@ -795,7 +855,7 @@ function drawHUD() {
   ctx.fillStyle = '#ffee44';
   ctx.font = 'bold 17px "Courier New"';
   ctx.textAlign = 'left';
-  ctx.fillText(`TEMPO: ${timer.toFixed(1)}s`, 10, 24);
+  ctx.fillText(`FASE ${phase}  ${timer.toFixed(1)}s`, 10, 24);
 
   // Score
   ctx.fillStyle = '#ffcc00';
@@ -915,11 +975,43 @@ function drawDead() {
   }
 }
 
-function drawWin() {
-  ctx.fillStyle = 'rgba(5,0,20,0.80)';
+function drawPhaseClear() {
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
   ctx.fillRect(0, 0, W, H);
 
-  // Border
+  ctx.textAlign = 'center';
+  ctx.strokeStyle = '#00ffee';
+  ctx.lineWidth   = 3;
+  ctx.strokeRect(30, 30, W - 60, H - 60);
+
+  ctx.fillStyle = '#00ffee';
+  ctx.font      = 'bold 40px "Courier New"';
+  ctx.fillText('FASE 1 COMPLETA!', W / 2, H / 2 - 60);
+
+  ctx.fillStyle = '#ffcc00';
+  ctx.font      = '22px "Courier New"';
+  ctx.fillText(`Tempo: ${totalTime.toFixed(1)}s`, W / 2, H / 2 - 10);
+
+  ctx.fillStyle = '#ff4488';
+  ctx.font      = 'bold 20px "Courier New"';
+  ctx.fillText('FASE 2 — CIDADE PROIBIDA', W / 2, H / 2 + 30);
+  ctx.fillStyle = '#ccaaff';
+  ctx.font      = '15px "Courier New"';
+  ctx.fillText('Cuidado: policiais mais rápidos!', W / 2, H / 2 + 58);
+
+  if (Math.floor(Date.now() / 550) % 2) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font      = '16px "Courier New"';
+    ctx.fillText('ENTER ou CLIQUE para continuar', W / 2, H / 2 + 90);
+  }
+}
+
+function drawWin() {
+  const finalTime = totalTime + timer;
+
+  ctx.fillStyle = 'rgba(5,0,10,0.85)';
+  ctx.fillRect(0, 0, W, H);
+
   ctx.strokeStyle = '#ffcc00';
   ctx.lineWidth   = 3;
   ctx.strokeRect(30, 30, W - 60, H - 60);
@@ -927,29 +1019,35 @@ function drawWin() {
   ctx.textAlign = 'center';
 
   ctx.fillStyle = '#ffcc00';
-  ctx.font      = 'bold 36px "Courier New"';
-  ctx.fillText('★ CHEGOU NO MERCADO! ★', W / 2, H / 2 - 65);
+  ctx.font      = 'bold 34px "Courier New"';
+  ctx.fillText('★ VICENTE CHEGOU! ★', W / 2, H / 2 - 80);
 
+  ctx.fillStyle = '#aaaaff';
+  ctx.font      = '16px "Courier New"';
+  ctx.fillText('Fase 1:', W / 2 - 60, H / 2 - 35);
   ctx.fillStyle = '#44ff88';
-  ctx.font      = 'bold 30px "Courier New"';
-  ctx.fillText(`Tempo: ${timer.toFixed(1)}s`, W / 2, H / 2 - 15);
+  ctx.fillText(`${totalTime.toFixed(1)}s`, W / 2 + 60, H / 2 - 35);
+
+  ctx.fillStyle = '#aaaaff';
+  ctx.fillText('Fase 2:', W / 2 - 60, H / 2 - 8);
+  ctx.fillStyle = '#44ff88';
+  ctx.fillText(`${timer.toFixed(1)}s`, W / 2 + 60, H / 2 - 8);
+
+  ctx.fillStyle = '#ffcc00';
+  ctx.font      = 'bold 24px "Courier New"';
+  ctx.fillText(`Total: ${finalTime.toFixed(1)}s`, W / 2, H / 2 + 28);
 
   if (score > 0) {
-    ctx.fillStyle = '#ffcc00';
-    ctx.font      = '18px "Courier New"';
-    ctx.fillText(`Moedas coletadas: ${score}`, W / 2, H / 2 + 18);
+    ctx.fillStyle = '#ffee44';
+    ctx.font      = '16px "Courier New"';
+    ctx.fillText(`★ Moedas: ${score}`, W / 2, H / 2 + 55);
   }
 
   if (bestTime !== null) {
-    if (Math.abs(timer - bestTime) < 0.01) {
-      ctx.fillStyle = '#ffcc00';
-      ctx.font      = 'bold 17px "Courier New"';
-      ctx.fillText('★ NOVO RECORDE! ★', W / 2, H / 2 + 48);
-    } else {
-      ctx.fillStyle = '#ccaaff';
-      ctx.font      = '16px "Courier New"';
-      ctx.fillText(`Melhor tempo: ${bestTime.toFixed(1)}s`, W / 2, H / 2 + 48);
-    }
+    const isRecord = Math.abs(finalTime - bestTime) < 0.05;
+    ctx.fillStyle = isRecord ? '#ffcc00' : '#ccaaff';
+    ctx.font      = isRecord ? 'bold 17px "Courier New"' : '15px "Courier New"';
+    ctx.fillText(isRecord ? '★ NOVO RECORDE! ★' : `Recorde: ${bestTime.toFixed(1)}s`, W / 2, H / 2 + 78);
   }
 
   if (Math.floor(Date.now() / 550) % 2) {
@@ -1000,10 +1098,11 @@ function loop(ts) {
 
     update(dt);
 
-    if (state === 'playing') drawHUD();
-    if (state === 'title')   drawTitle();
-    if (state === 'dead')    drawDead();
-    if (state === 'win')     drawWin();
+    if (state === 'playing')     drawHUD();
+    if (state === 'title')       drawTitle();
+    if (state === 'dead')        drawDead();
+    if (state === 'phase_clear') drawPhaseClear();
+    if (state === 'win')         drawWin();
   }
 
   requestAnimationFrame(loop);
