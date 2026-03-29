@@ -125,6 +125,7 @@ const JUMP_FORCE  = -16;
 const MOVE_SPEED  = 230;   // player movement speed px/s
 const ENEMY_SPEED = 130;   // enemy walk speed px/s (world coords)
 const WORLD_LEN   = 6000;  // total world distance
+let   curWorldLen = WORLD_LEN; // atual (muda na fase 3)
 const PLAYER_X    = 140;   // fixed screen X
 
 const canvas = document.getElementById('game');
@@ -161,6 +162,18 @@ for (let i = 1; i <= 4; i++)
 for (let i = 1; i <= 10; i++)
   loadImg(`cop${i}`, `imagens/Packs/Warped City/V2/Sprites/cop/run/cop${i}.png`);
 
+// Boss – Fase 3: Hell-Beast
+for (let i = 1; i <= 6; i++)
+  loadImg(`bossIdle${i}`, `imagens/Characters/Hell-Beast/Idle/hell-beast-idle${i}.png`);
+for (let i = 1; i <= 4; i++)
+  loadImg(`bossBreath${i}`, `imagens/Characters/Hell-Beast/Breath/hell-beast-breath${i}.png`);
+for (let i = 1; i <= 3; i++)
+  loadImg(`bossFire${i}`, `imagens/Characters/Hell-Beast/Fireball/frame${i}.png`);
+
+// Environment – Fase 3: GothicVania Town
+loadImg('bg3Back', 'imagens/Packs/GothicVania-town/layers/background.png');
+loadImg('bg3Mid',  'imagens/Packs/GothicVania-town/layers/middleground.png');
+
 // Environment – Fase 1: Miami Synth + Streets of Fight
 loadImg('bgSky',      'imagens/Packs/Miami-synth-files/Layers/back.png');
 loadImg('bgBuildings','imagens/Packs/Miami-synth-files/Layers/buildings.png');
@@ -174,16 +187,20 @@ loadImg('bg2Front',  'imagens/Packs/Warped City/V1/warped city files/ENVIRONMENT
 // ─────────────────────────────────────────────────────────
 //  GAME STATE
 // ─────────────────────────────────────────────────────────
-let state    = 'loading';   // loading | title | playing | phase_clear | dead | win
+let state    = 'loading';   // loading | title | playing | phase_clear | phase2_clear | dead | win
 let phase    = 1;
 let worldX   = 0;
 let timer    = 0;
-let totalTime  = 0;
+let phase1Time = 0;
+let phase2Time = 0;
 let bestTime   = null;
 let lives      = 5;
 let phaseTimer = 0;
 let difficulty = 'medio';   // 'facil' | 'medio' | 'dificil'
 let selectedDiff = 1;       // índice na lista [facil, medio, dificil]
+
+// Boss (fase 3)
+let boss = null;
 
 const DIFF_OPTIONS = [
   { key: 'facil',    label: 'FÁCIL',    lives: 10, color: '#44ff88' },
@@ -280,11 +297,12 @@ function onJumpPress() {
 }
 
 function onAction() {
-  if (state === 'title')       { state = 'difficulty'; return; }
-  if (state === 'difficulty')  { confirmDifficulty(); return; }
-  if (state === 'dead')        { lives > 0 ? resumeGame() : startGame(); return; }
-  if (state === 'phase_clear') { startPhase2(); return; }
-  if (state === 'win')         { state = 'difficulty'; return; }
+  if (state === 'title')        { state = 'difficulty'; return; }
+  if (state === 'difficulty')   { confirmDifficulty(); return; }
+  if (state === 'dead')         { lives > 0 ? resumeGame() : startGame(); return; }
+  if (state === 'phase_clear')  { startPhase2(); return; }
+  if (state === 'phase2_clear') { startPhase3(); return; }
+  if (state === 'win')          { state = 'difficulty'; return; }
 }
 
 function confirmDifficulty() {
@@ -298,7 +316,7 @@ function confirmDifficulty() {
 function makeHoles() {
   const arr = [];
   let x = 900;
-  while (x < WORLD_LEN - 400) {
+  while (x < curWorldLen - 400) {
     const w = 70 + Math.random() * 60;
     arr.push({ wx: x, w });
     x += 350 + Math.random() * 350;
@@ -309,7 +327,7 @@ function makeHoles() {
 function makeCoins() {
   const arr = [];
   // Coins appear above the path
-  for (let wx = 400; wx < WORLD_LEN - 200; wx += 220 + Math.random() * 180) {
+  for (let wx = 400; wx < curWorldLen - 200; wx += 220 + Math.random() * 180) {
     const y = GROUND_Y - 80 - Math.random() * 60;
     arr.push({ wx, y, collected: false });
   }
@@ -335,15 +353,18 @@ function startGame() {
   state      = 'playing';
   worldX     = 0;
   timer      = 0;
-  totalTime  = 0;
+  phase1Time = 0;
+  phase2Time = 0;
   lives      = DIFF_OPTIONS[selectedDiff].lives;
   score      = 0;
   enemies    = [];
   spawnTick  = 0;
   spawnRate  = 2.4;
   particles  = [];
+  curWorldLen = WORLD_LEN;
   holes      = makeHoles();
   coins      = makeCoins();
+  boss       = null;
   resetPlayer();
 }
 
@@ -355,10 +376,47 @@ function startPhase2() {
   lives      = DIFF_OPTIONS[selectedDiff].lives;
   enemies    = [];
   spawnTick  = 0;
-  spawnRate  = 2.0;   // começa mais difícil
+  spawnRate  = 2.0;
   particles  = [];
+  curWorldLen = WORLD_LEN;
   holes      = makeHoles();
   coins      = makeCoins();
+  boss       = null;
+  resetPlayer();
+}
+
+function startPhase3() {
+  phase      = 3;
+  state      = 'playing';
+  worldX     = 0;
+  timer      = 0;
+  lives      = DIFF_OPTIONS[selectedDiff].lives;
+  score      = 0;
+  enemies    = [];
+  spawnTick  = 0;
+  spawnRate  = 3.5;   // poucos inimigos — o boss é o perigo
+  particles  = [];
+  curWorldLen = 3500;
+  holes      = makeHoles();
+  coins      = makeCoins();
+  boss       = {
+    wx:          curWorldLen - 800,
+    y:           GROUND_Y - 110,
+    hp:          5,
+    maxHp:       5,
+    anim:        'idle',
+    frame:       0,
+    tick:        0,
+    attackTimer: 3.5,
+    state:       'idle',       // 'idle' | 'windup' | 'shoot'
+    windupTimer: 0,
+    hurtFlash:   0,
+    dead:        false,
+    deathTimer:  0,
+    w:           80,
+    h:           110,
+    fireballs:   [],
+  };
   resetPlayer();
 }
 
@@ -383,6 +441,8 @@ function resumeGame() {
   PL.facingLeft = false;
   enemies       = [];
   spawnTick     = 0;
+  // Limpa fireballs do boss mas mantém boss vivo
+  if (boss && !boss.dead) boss.fireballs = [];
 }
 
 function killPlayer() {
@@ -429,22 +489,119 @@ function update(dt) {
   worldX = Math.max(0, worldX);
 
   // Win / fase clear check
-  if (worldX >= WORLD_LEN) {
+  const clearCondition = phase === 3 ? (worldX >= curWorldLen && boss && boss.dead) : worldX >= curWorldLen;
+  if (clearCondition) {
     spawnParticles(W / 2, H / 2, '#ffcc00', 35);
     if (phase === 1) {
-      totalTime = timer;
+      phase1Time = timer;
       state = 'phase_clear';
+    } else if (phase === 2) {
+      phase2Time = timer;
+      state = 'phase2_clear';
     } else {
-      const final = totalTime + timer;
+      const final = phase1Time + phase2Time + timer;
       if (!bestTime || final < bestTime) bestTime = final;
       state = 'win';
     }
     return;
   }
 
-  // Dificuldade escala com distância (fase 2 começa mais difícil)
-  const baseRate = phase === 1 ? 2.4 : 1.8;
-  spawnRate = Math.max(phase === 1 ? 1.0 : 0.7, baseRate - worldX * 0.0003);
+  // Dificuldade escala com distância
+  const baseRate = phase === 1 ? 2.4 : phase === 2 ? 1.8 : 3.5;
+  spawnRate = Math.max(phase === 1 ? 1.0 : phase === 2 ? 0.7 : 2.0, baseRate - worldX * 0.0003);
+
+  // ── Boss (fase 3) ─────────────────────────────────────
+  if (phase === 3 && boss && !boss.dead) {
+    // Animação
+    boss.tick += dt;
+    const bAnimSpeed = boss.anim === 'idle' ? 0.14 : 0.10;
+    const bAnimCount = boss.anim === 'idle' ? 6 : 4;
+    if (boss.tick > bAnimSpeed) {
+      boss.tick = 0;
+      boss.frame = (boss.frame + 1) % bAnimCount;
+    }
+
+    // Flash de dano
+    if (boss.hurtFlash > 0) boss.hurtFlash -= dt;
+
+    // Estado: idle → windup → shoot
+    if (boss.state === 'idle') {
+      boss.attackTimer -= dt;
+      if (boss.attackTimer <= 0) {
+        boss.state = 'windup';
+        boss.anim  = 'breath';
+        boss.frame = 0;
+        boss.windupTimer = 1.0;
+      }
+    } else if (boss.state === 'windup') {
+      boss.windupTimer -= dt;
+      if (boss.windupTimer <= 0) {
+        boss.state = 'idle';
+        boss.anim  = 'idle';
+        boss.frame = 0;
+        boss.attackTimer = 2.2 + Math.random() * 1.5;
+        // Dispara fireball
+        const bSx = boss.wx - worldX;
+        boss.fireballs.push({
+          wx: boss.wx - 30,
+          y:  boss.y + boss.h * 0.35,
+          vx: -(200 + Math.random() * 80),
+          frame: 0, tick: 0,
+          w: 36, h: 36,
+        });
+      }
+    }
+
+    // Stomp: jogador pula em cima do boss
+    const bSx = boss.wx - worldX;
+    const stomping = !PL.onGround && PL.vy > 0
+      && PLAYER_X + PL.width > bSx + 10 && PLAYER_X < bSx + boss.w - 10
+      && PL.y + PL.height > boss.y && PL.y + PL.height < boss.y + boss.h * 0.45;
+    if (stomping && boss.hurtFlash <= 0) {
+      boss.hp--;
+      boss.hurtFlash = 0.4;
+      PL.vy = JUMP_FORCE * 0.7;  // ricochete
+      spawnParticles(bSx + boss.w / 2, boss.y + 20, '#ff6600', 12);
+      if (boss.hp <= 0) {
+        boss.dead = true;
+        boss.deathTimer = 1.8;
+        spawnParticles(bSx + boss.w / 2, boss.y + boss.h / 2, '#ff4400', 30);
+        spawnParticles(bSx + boss.w / 2, boss.y + boss.h / 2, '#ffaa00', 20);
+      }
+    }
+
+    // Fireballs do boss
+    for (let i = boss.fireballs.length - 1; i >= 0; i--) {
+      const fb = boss.fireballs[i];
+      fb.wx += fb.vx * dt;
+      fb.tick += dt;
+      if (fb.tick > 0.09) { fb.tick = 0; fb.frame = (fb.frame + 1) % 3; }
+
+      const fsx = fb.wx - worldX;
+      if (fsx < -60) { boss.fireballs.splice(i, 1); continue; }
+
+      // Colisão com jogador
+      if (PL.invincible <= 0) {
+        const fbRight = fsx + fb.w, fbBottom = fb.y + fb.h;
+        if (PLAYER_X < fbRight && PLAYER_X + PL.width > fsx
+            && PL.y < fbBottom && PL.y + PL.height > fb.y) {
+          boss.fireballs.splice(i, 1);
+          killPlayer();
+          return;
+        }
+      }
+    }
+  }
+
+  // Countdown boss death
+  if (phase === 3 && boss && boss.dead) {
+    boss.deathTimer -= dt;
+    // Partículas contínuas enquanto morre
+    if (boss.deathTimer > 0 && Math.random() < 0.3) {
+      const bSx = boss.wx - worldX;
+      spawnParticles(bSx + Math.random() * boss.w, boss.y + Math.random() * boss.h, '#ff4400', 4);
+    }
+  }
 
   // ── Player physics ────────────────────────────────────
   PL.vy += GRAVITY;
@@ -493,7 +650,7 @@ function update(dt) {
   if (spawnTick >= spawnRate && enemies.length < 3) {
     spawnTick = 0;
     const jumping = phase === 1 ? Math.random() < 0.3 : Math.random() < 0.5;
-    const isCop = phase === 2;
+    const isCop = phase >= 2;
     enemies.push({
       wx:        worldX + W + 64,
       y:         GROUND_Y - 56,
@@ -624,7 +781,7 @@ function drawBackground() {
     }
     ctx.globalAlpha = 1;
 
-  } else {
+  } else if (phase === 2) {
     // Fase 2 – Warped City: céu vermelho ameaçador
     const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
     grad.addColorStop(0,   '#1a0000');
@@ -642,6 +799,27 @@ function drawBackground() {
       const twinkle = 0.4 + 0.6 * Math.sin(Date.now() * 0.002 + s.x);
       ctx.globalAlpha = twinkle * 0.5;
       ctx.fillStyle = s.x % 2 === 0 ? '#ff4400' : '#ff0055';
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+  } else {
+    // Fase 3 – GothicVania Town: céu noturno sinistro
+    const grad3 = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    grad3.addColorStop(0,   '#050010');
+    grad3.addColorStop(0.5, '#100025');
+    grad3.addColorStop(1,   '#1a0030');
+    ctx.fillStyle = grad3;
+    ctx.fillRect(0, 0, W, GROUND_Y);
+
+    drawTiledImg('bg3Back', 0.04, GROUND_Y * 0.95, GROUND_Y);
+    drawTiledImg('bg3Mid',  0.18, GROUND_Y * 0.65, GROUND_Y);
+
+    // Estrelas roxas/brancas
+    for (const s of STARS) {
+      const twinkle = 0.4 + 0.6 * Math.sin(Date.now() * 0.0015 + s.x);
+      ctx.globalAlpha = twinkle * 0.7;
+      ctx.fillStyle = s.x % 3 === 0 ? '#cc88ff' : s.x % 3 === 1 ? '#ffffff' : '#ff88ff';
       ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -677,37 +855,64 @@ function drawGround() {
     const x = seg.s, w = seg.e - seg.s;
 
     const isPhase2 = phase === 2;
+    const isPhase3 = phase === 3;
 
-    // ── Calçada (topo, 18px) ──────────────────────────
-    ctx.fillStyle = isPhase2 ? '#3a2020' : '#5a5a72';
-    ctx.fillRect(x, GROUND_Y, w, 18);
+    if (isPhase3) {
+      // ── Pedra gótica ─────────────────────────────────
+      ctx.fillStyle = '#2a1f3d';
+      ctx.fillRect(x, GROUND_Y, w, 18);
+      ctx.fillStyle = '#1e1428';
+      for (let tx = x - (scrollOff % 50); tx < x + w; tx += 50) {
+        ctx.fillRect(tx, GROUND_Y, 2, 18);
+      }
+      ctx.fillRect(x, GROUND_Y + 8, w, 1);
+      // Borda de pedra
+      ctx.fillStyle = '#7a44bb';
+      ctx.fillRect(x, GROUND_Y + 17, w, 3);
+      // Chão de pedra escura
+      ctx.fillStyle = '#150f20';
+      ctx.fillRect(x, GROUND_Y + 20, w, H - GROUND_Y - 20);
+      // Veios de pedra
+      ctx.fillStyle = '#221830';
+      for (let tx = x - (scrollOff % 60); tx < x + w; tx += 60) {
+        ctx.fillRect(tx, GROUND_Y + 20, 1, H - GROUND_Y - 20);
+      }
+      // Brilho arcano roxo na borda
+      const glow3 = 0.4 + 0.3 * Math.sin(Date.now() * 0.003 + x * 0.01);
+      ctx.fillStyle = `rgba(160, 60, 255, ${glow3 * 0.35})`;
+      ctx.fillRect(x, GROUND_Y + 20, w, 4);
+    } else {
+      // ── Calçada (topo, 18px) ──────────────────────────
+      ctx.fillStyle = isPhase2 ? '#3a2020' : '#5a5a72';
+      ctx.fillRect(x, GROUND_Y, w, 18);
 
-    ctx.fillStyle = isPhase2 ? '#2a1010' : '#3a3a50';
-    for (let tx = x - (scrollOff % 40); tx < x + w; tx += 40) {
-      ctx.fillRect(tx, GROUND_Y, 1, 18);
+      ctx.fillStyle = isPhase2 ? '#2a1010' : '#3a3a50';
+      for (let tx = x - (scrollOff % 40); tx < x + w; tx += 40) {
+        ctx.fillRect(tx, GROUND_Y, 1, 18);
+      }
+      ctx.fillRect(x, GROUND_Y + 9, w, 1);
+
+      // Meio-fio
+      ctx.fillStyle = isPhase2 ? '#cc3333' : '#cccccc';
+      ctx.fillRect(x, GROUND_Y + 17, w, 3);
+
+      // ── Asfalto ───────────────────────────────────────
+      ctx.fillStyle = isPhase2 ? '#1a1010' : '#2a2a35';
+      ctx.fillRect(x, GROUND_Y + 20, w, H - GROUND_Y - 20);
+
+      // Faixa central
+      const dashLen = 36, dashGap = 24, dashY = GROUND_Y + 48;
+      ctx.fillStyle = isPhase2 ? '#aa0000' : '#aaaa00';
+      for (let tx = x - (scrollOff % (dashLen + dashGap)); tx < x + w; tx += dashLen + dashGap) {
+        const dx = Math.max(tx, x);
+        const dw2 = Math.min(tx + dashLen, x + w) - dx;
+        if (dw2 > 0) ctx.fillRect(dx, dashY, dw2, 4);
+      }
+
+      // Faixa lateral superior
+      ctx.fillStyle = isPhase2 ? '#552222' : '#555566';
+      ctx.fillRect(x, GROUND_Y + 20, w, 2);
     }
-    ctx.fillRect(x, GROUND_Y + 9, w, 1);
-
-    // Meio-fio
-    ctx.fillStyle = isPhase2 ? '#cc3333' : '#cccccc';
-    ctx.fillRect(x, GROUND_Y + 17, w, 3);
-
-    // ── Asfalto ───────────────────────────────────────
-    ctx.fillStyle = isPhase2 ? '#1a1010' : '#2a2a35';
-    ctx.fillRect(x, GROUND_Y + 20, w, H - GROUND_Y - 20);
-
-    // Faixa central
-    const dashLen = 36, dashGap = 24, dashY = GROUND_Y + 48;
-    ctx.fillStyle = isPhase2 ? '#aa0000' : '#aaaa00';
-    for (let tx = x - (scrollOff % (dashLen + dashGap)); tx < x + w; tx += dashLen + dashGap) {
-      const dx = Math.max(tx, x);
-      const dw2 = Math.min(tx + dashLen, x + w) - dx;
-      if (dw2 > 0) ctx.fillRect(dx, dashY, dw2, 4);
-    }
-
-    // Faixa lateral superior
-    ctx.fillStyle = isPhase2 ? '#552222' : '#555566';
-    ctx.fillRect(x, GROUND_Y + 20, w, 2);
   }
 
   // Holes – glowing orange (open manhole / construction)
@@ -946,6 +1151,138 @@ function drawEnemies() {
 }
 
 // ─────────────────────────────────────────────────────────
+//  DRAW – BOSS (fase 3)
+// ─────────────────────────────────────────────────────────
+function drawBoss() {
+  if (!boss) return;
+
+  const bsx = boss.wx - worldX;
+  if (bsx > W + 150 || bsx < -200) return;
+
+  ctx.save();
+
+  if (boss.dead) {
+    // Desaparece gradualmente
+    ctx.globalAlpha = Math.max(0, boss.deathTimer / 1.8);
+  } else if (boss.hurtFlash > 0) {
+    // Flash vermelho ao levar dano
+    ctx.filter = 'brightness(3) sepia(1) hue-rotate(-20deg)';
+  }
+
+  const SCALE = 3.2;
+  const suffix = boss.frame + 1;
+  const key = boss.anim === 'idle' ? `bossIdle${suffix}` : `bossBreath${suffix}`;
+  const img = IMG[key];
+
+  if (img && img.complete && img.naturalWidth > 0) {
+    const dw = img.naturalWidth  * SCALE;
+    const dh = img.naturalHeight * SCALE;
+    // Boss faces left (flip horizontally)
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, -(bsx + boss.w / 2) - dw / 2, GROUND_Y - dh, dw, dh);
+  } else {
+    // Fallback box vermelho
+    ctx.fillStyle = '#cc2200';
+    ctx.fillRect(bsx, boss.y, boss.w, boss.h);
+    ctx.fillStyle = '#ff4400';
+    ctx.font = 'bold 24px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('👹', bsx + boss.w / 2, boss.y + boss.h / 2);
+  }
+
+  ctx.restore();
+
+  // HP Bar
+  if (!boss.dead) {
+    const barW = 120, barH = 10;
+    const barX = bsx + boss.w / 2 - barW / 2;
+    const barY = boss.y - 18;
+    ctx.fillStyle = '#330000';
+    ctx.fillRect(barX, barY, barW, barH);
+    const hpPct = boss.hp / boss.maxHp;
+    ctx.fillStyle = hpPct > 0.5 ? '#ff4400' : hpPct > 0.25 ? '#ff8800' : '#ffcc00';
+    ctx.fillRect(barX, barY, barW * hpPct, barH);
+    ctx.strokeStyle = '#cc2200';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+  }
+}
+
+function drawBossFireballs() {
+  if (!boss) return;
+  for (const fb of boss.fireballs) {
+    const fsx = fb.wx - worldX;
+    if (fsx > W + 60 || fsx < -60) continue;
+
+    const SCALE = 2.0;
+    const key = `bossFire${fb.frame + 1}`;
+    const img = IMG[key];
+
+    ctx.save();
+    // Glow laranja
+    ctx.shadowColor = '#ff6600';
+    ctx.shadowBlur  = 14;
+    if (img && img.complete && img.naturalWidth > 0) {
+      const dw = img.naturalWidth  * SCALE;
+      const dh = img.naturalHeight * SCALE;
+      ctx.drawImage(img, fsx - dw / 2, fb.y - dh / 2, dw, dh);
+    } else {
+      ctx.fillStyle = '#ff6600';
+      ctx.beginPath();
+      ctx.arc(fsx, fb.y, 14, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+function drawBossHUD() {
+  if (!boss || boss.dead) return;
+
+  const barW = 260, barH = 18;
+  const barX = W / 2 - barW / 2;
+  const barY = H - 44;
+
+  // Fundo
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(barX - 8, barY - 6, barW + 16, barH + 14);
+
+  // Label
+  ctx.fillStyle = '#ff4400';
+  ctx.font = 'bold 11px "Courier New"';
+  ctx.textAlign = 'center';
+  const bossLabel = boss.hurtFlash > 0 ? '💥 CHEFE FERIDO!' : '☠ GERENTE MALIGNO';
+  ctx.fillText(bossLabel, W / 2, barY - 1);
+
+  // Barra HP boss
+  ctx.fillStyle = '#330000';
+  ctx.fillRect(barX, barY + 5, barW, barH);
+
+  const hpPct = Math.max(0, boss.hp / boss.maxHp);
+  const hpColor = hpPct > 0.5 ? '#ff2200' : hpPct > 0.25 ? '#ff8800' : '#ffee00';
+  ctx.fillStyle = hpColor;
+  ctx.fillRect(barX, barY + 5, barW * hpPct, barH);
+
+  // Segmentos
+  ctx.strokeStyle = '#550000';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < boss.maxHp; i++) {
+    const sx = barX + (barW / boss.maxHp) * i;
+    ctx.beginPath(); ctx.moveTo(sx, barY + 5); ctx.lineTo(sx, barY + 5 + barH); ctx.stroke();
+  }
+
+  ctx.strokeStyle = '#cc2200';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(barX, barY + 5, barW, barH);
+
+  // Corações (HP do boss)
+  ctx.fillStyle = '#ff4400';
+  ctx.font = '12px "Courier New"';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${'♦ '.repeat(boss.hp).trim()}`, W / 2, barY + 20);
+}
+
+// ─────────────────────────────────────────────────────────
 //  DRAW – PARTICLES
 // ─────────────────────────────────────────────────────────
 function drawParticles() {
@@ -985,7 +1322,7 @@ function drawHUD() {
   ctx.fillText('♥ '.repeat(lives), W - 10, 24);
 
   // Progress bar
-  const pct    = Math.min(worldX / WORLD_LEN, 1);
+  const pct    = Math.min(worldX / curWorldLen, 1);
   const barX   = W / 2 - 160;
   const barW   = 320;
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -1174,7 +1511,7 @@ function drawPhaseClear() {
 
   ctx.fillStyle = '#ffcc00';
   ctx.font      = '22px "Courier New"';
-  ctx.fillText(`Tempo: ${totalTime.toFixed(1)}s`, W / 2, H / 2 - 10);
+  ctx.fillText(`Tempo: ${phase1Time.toFixed(1)}s`, W / 2, H / 2 - 10);
 
   ctx.fillStyle = '#ff4488';
   ctx.font      = 'bold 20px "Courier New"';
@@ -1190,10 +1527,44 @@ function drawPhaseClear() {
   }
 }
 
-function drawWin() {
-  const finalTime = totalTime + timer;
+function drawPhase2Clear() {
+  ctx.fillStyle = 'rgba(0,0,0,0.80)';
+  ctx.fillRect(0, 0, W, H);
 
-  ctx.fillStyle = 'rgba(5,0,10,0.85)';
+  ctx.textAlign = 'center';
+  ctx.strokeStyle = '#ff4400';
+  ctx.lineWidth   = 3;
+  ctx.strokeRect(30, 30, W - 60, H - 60);
+
+  ctx.fillStyle = '#ff8800';
+  ctx.font      = 'bold 38px "Courier New"';
+  ctx.fillText('FASE 2 COMPLETA!', W / 2, H / 2 - 70);
+
+  ctx.fillStyle = '#ffcc00';
+  ctx.font      = '20px "Courier New"';
+  ctx.fillText(`Fase 1: ${phase1Time.toFixed(1)}s  |  Fase 2: ${phase2Time.toFixed(1)}s`, W / 2, H / 2 - 22);
+
+  ctx.fillStyle = '#cc44ff';
+  ctx.font      = 'bold 22px "Courier New"';
+  ctx.fillText('FASE 3 — O GERENTE MALIGNO', W / 2, H / 2 + 20);
+
+  ctx.fillStyle = '#ff6666';
+  ctx.font      = '15px "Courier New"';
+  ctx.fillText('Pule na cabeça do chefe para derrotá-lo!', W / 2, H / 2 + 50);
+  ctx.fillStyle = '#ffaaaa';
+  ctx.fillText('Desvie das bolas de fogo!', W / 2, H / 2 + 72);
+
+  if (Math.floor(Date.now() / 550) % 2) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font      = '16px "Courier New"';
+    ctx.fillText('ENTER ou CLIQUE para continuar', W / 2, H / 2 + 105);
+  }
+}
+
+function drawWin() {
+  const finalTime = phase1Time + phase2Time + timer;
+
+  ctx.fillStyle = 'rgba(5,0,10,0.92)';
   ctx.fillRect(0, 0, W, H);
 
   ctx.strokeStyle = '#ffcc00';
@@ -1203,41 +1574,51 @@ function drawWin() {
   ctx.textAlign = 'center';
 
   ctx.fillStyle = '#ffcc00';
-  ctx.font      = 'bold 34px "Courier New"';
-  ctx.fillText('★ VICENTE CHEGOU! ★', W / 2, H / 2 - 80);
+  ctx.font      = 'bold 30px "Courier New"';
+  ctx.fillText('★ VICENTE CHEGOU! ★', W / 2, H / 2 - 98);
 
-  ctx.fillStyle = '#aaaaff';
-  ctx.font      = '16px "Courier New"';
-  ctx.fillText('Fase 1:', W / 2 - 60, H / 2 - 35);
-  ctx.fillStyle = '#44ff88';
-  ctx.fillText(`${totalTime.toFixed(1)}s`, W / 2 + 60, H / 2 - 35);
+  ctx.fillStyle = '#ccaaff';
+  ctx.font      = '13px "Courier New"';
+  ctx.fillText('O Gerente Maligno foi derrotado!', W / 2, H / 2 - 70);
 
-  ctx.fillStyle = '#aaaaff';
-  ctx.fillText('Fase 2:', W / 2 - 60, H / 2 - 8);
-  ctx.fillStyle = '#44ff88';
-  ctx.fillText(`${timer.toFixed(1)}s`, W / 2 + 60, H / 2 - 8);
+  const rows = [
+    ['Fase 1 (Rua):', phase1Time.toFixed(1) + 's'],
+    ['Fase 2 (Cidade):', phase2Time.toFixed(1) + 's'],
+    ['Fase 3 (Chefe):', timer.toFixed(1) + 's'],
+  ];
+  rows.forEach(([label, val], i) => {
+    const ry = H / 2 - 42 + i * 26;
+    ctx.fillStyle = '#aaaaff';
+    ctx.font = '15px "Courier New"';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, W / 2 - 130, ry);
+    ctx.fillStyle = '#44ff88';
+    ctx.textAlign = 'right';
+    ctx.fillText(val, W / 2 + 130, ry);
+  });
 
+  ctx.textAlign = 'center';
   ctx.fillStyle = '#ffcc00';
-  ctx.font      = 'bold 24px "Courier New"';
-  ctx.fillText(`Total: ${finalTime.toFixed(1)}s`, W / 2, H / 2 + 28);
+  ctx.font      = 'bold 22px "Courier New"';
+  ctx.fillText(`Total: ${finalTime.toFixed(1)}s`, W / 2, H / 2 + 46);
 
   if (score > 0) {
     ctx.fillStyle = '#ffee44';
-    ctx.font      = '16px "Courier New"';
-    ctx.fillText(`★ Moedas: ${score}`, W / 2, H / 2 + 55);
+    ctx.font      = '14px "Courier New"';
+    ctx.fillText(`★ Moedas: ${score}`, W / 2, H / 2 + 70);
   }
 
   if (bestTime !== null) {
     const isRecord = Math.abs(finalTime - bestTime) < 0.05;
     ctx.fillStyle = isRecord ? '#ffcc00' : '#ccaaff';
-    ctx.font      = isRecord ? 'bold 17px "Courier New"' : '15px "Courier New"';
-    ctx.fillText(isRecord ? '★ NOVO RECORDE! ★' : `Recorde: ${bestTime.toFixed(1)}s`, W / 2, H / 2 + 78);
+    ctx.font      = isRecord ? 'bold 16px "Courier New"' : '14px "Courier New"';
+    ctx.fillText(isRecord ? '★ NOVO RECORDE! ★' : `Recorde: ${bestTime.toFixed(1)}s`, W / 2, H / 2 + 92);
   }
 
   if (Math.floor(Date.now() / 550) % 2) {
     ctx.fillStyle = '#aaaaff';
-    ctx.font      = '16px "Courier New"';
-    ctx.fillText('ENTER ou CLIQUE para jogar de novo', W / 2, H / 2 + 90);
+    ctx.font      = '15px "Courier New"';
+    ctx.fillText('ENTER ou CLIQUE para jogar de novo', W / 2, H / 2 + 116);
   }
 }
 
@@ -1273,21 +1654,24 @@ function loop(ts) {
     drawCoins();
     drawGround();
 
-    const marketSx = WORLD_LEN - worldX - 10;
+    const marketSx = curWorldLen - worldX - 10;
     if (marketSx < W + 250) drawMarket(marketSx);
 
     drawPlayer();
     drawEnemies();
+    drawBoss();
+    drawBossFireballs();
     drawParticles();
 
     update(dt);
 
-    if (state === 'playing')     drawHUD();
-    if (state === 'title')       drawTitle();
-    if (state === 'difficulty')  drawDifficulty();
-    if (state === 'dead')        drawDead();
-    if (state === 'phase_clear') drawPhaseClear();
-    if (state === 'win')         drawWin();
+    if (state === 'playing') { drawHUD(); if (phase === 3) drawBossHUD(); }
+    if (state === 'title')        drawTitle();
+    if (state === 'difficulty')   drawDifficulty();
+    if (state === 'dead')         drawDead();
+    if (state === 'phase_clear')  drawPhaseClear();
+    if (state === 'phase2_clear') drawPhase2Clear();
+    if (state === 'win')          drawWin();
   }
 
   requestAnimationFrame(loop);
