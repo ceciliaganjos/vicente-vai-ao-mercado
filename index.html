@@ -174,6 +174,10 @@ for (let i = 1; i <= 3; i++)
 loadImg('bg3Back', 'imagens/Packs/GothicVania-town/layers/background.png');
 loadImg('bg3Mid',  'imagens/Packs/GothicVania-town/layers/middleground.png');
 
+// Portraits – cutscenes
+loadImg('marcela', 'imagens/portraits/marcela.png');
+loadImg('vicente', 'imagens/portraits/vicente.png');
+
 // Environment – Fase 1: Miami Synth + Streets of Fight
 loadImg('bgSky',      'imagens/Packs/Miami-synth-files/Layers/back.png');
 loadImg('bgBuildings','imagens/Packs/Miami-synth-files/Layers/buildings.png');
@@ -201,6 +205,28 @@ let selectedDiff = 1;       // índice na lista [facil, medio, dificil]
 
 // Boss (fase 3)
 let boss = null;
+
+// Cutscene
+let cutsceneLine = 0;
+let cutscenePhase = 0; // qual fase está prestes a começar
+
+const CUTSCENES = {
+  1: [
+    { speaker: 'marcela', name: 'Marcela (mãe)', text: 'Vicente! Vai lá no mercado comprar pão de forma. Rapidinho, hein?' },
+    { speaker: 'vicente', name: 'Vicente',        text: 'Tá bom, mãe...' },
+    { speaker: 'marcela', name: 'Marcela (mãe)', text: 'E não para pra conversar com ninguém! Desvie dos baderneiros que tão na rua!' },
+  ],
+  2: [
+    { speaker: 'marcela', name: 'Marcela (mãe)', text: 'Ah, filho! Esqueci de falar — precisa de leite também!' },
+    { speaker: 'vicente', name: 'Vicente',        text: 'Mãe, a cidade tá cheia de policial...' },
+    { speaker: 'marcela', name: 'Marcela (mãe)', text: 'Não me importa! O leite é pra hoje. Vai logo!' },
+  ],
+  3: [
+    { speaker: 'marcela', name: 'Marcela (mãe)', text: 'VICENTE! O gerente do mercado ficou maluco e tá bloqueando a entrada!' },
+    { speaker: 'vicente', name: 'Vicente',        text: 'Como assim?! Sério isso, mãe?' },
+    { speaker: 'marcela', name: 'Marcela (mãe)', text: 'Precisamos do café com urgência. Você vai ter que enfrentá-lo, filho!' },
+  ],
+};
 
 const DIFF_OPTIONS = [
   { key: 'facil',    label: 'FÁCIL',    lives: 10, color: '#44ff88' },
@@ -269,6 +295,7 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { KEYS[e.code] = false; });
 canvas.addEventListener('pointerdown', e => {
+  if (state === 'cutscene') { advanceCutscene(); return; }
   if (state === 'difficulty') {
     const rect = canvas.getBoundingClientRect();
     const mx = (e.clientX - rect.left) * (W / rect.width);
@@ -300,14 +327,35 @@ function onAction() {
   if (state === 'title')        { state = 'difficulty'; return; }
   if (state === 'difficulty')   { confirmDifficulty(); return; }
   if (state === 'dead')         { lives > 0 ? resumeGame() : startGame(); return; }
-  if (state === 'phase_clear')  { startPhase2(); return; }
-  if (state === 'phase2_clear') { startPhase3(); return; }
+  if (state === 'phase_clear')  { beginCutscene(2); return; }
+  if (state === 'phase2_clear') { beginCutscene(3); return; }
   if (state === 'win')          { state = 'difficulty'; return; }
+  if (state === 'cutscene')     { advanceCutscene(); return; }
+}
+
+function beginCutscene(forPhase) {
+  cutscenePhase = forPhase;
+  cutsceneLine  = 0;
+  state         = 'cutscene';
+}
+
+function advanceCutscene() {
+  const lines = CUTSCENES[cutscenePhase];
+  if (cutsceneLine < lines.length - 1) {
+    cutsceneLine++;
+  } else {
+    // Terminou — inicia a fase
+    if      (cutscenePhase === 1) startGame();
+    else if (cutscenePhase === 2) startPhase2();
+    else if (cutscenePhase === 3) startPhase3();
+  }
 }
 
 function confirmDifficulty() {
   difficulty = DIFF_OPTIONS[selectedDiff].key;
-  startGame();
+  // Seta as lives para o personagem antes da cutscene (startGame vai resetar de novo)
+  lives = DIFF_OPTIONS[selectedDiff].lives;
+  beginCutscene(1);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -1623,6 +1671,123 @@ function drawWin() {
 }
 
 // ─────────────────────────────────────────────────────────
+//  DRAW – CUTSCENE
+// ─────────────────────────────────────────────────────────
+function drawCutscene() {
+  const lines = CUTSCENES[cutscenePhase];
+  if (!lines) return;
+  const line = lines[cutsceneLine];
+
+  const isLeft  = line.speaker === 'marcela';
+  const imgKey  = line.speaker; // 'marcela' ou 'vicente'
+  const img     = IMG[imgKey];
+
+  // Fundo escuro com gradiente temático por fase
+  const bgColors = {
+    1: ['#0a001a', '#200050'],
+    2: ['#1a0000', '#400010'],
+    3: ['#050010', '#1a0030'],
+  };
+  const [c1, c2] = bgColors[cutscenePhase] || ['#0a001a', '#200050'];
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, c1);
+  grad.addColorStop(1, c2);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Linha de brilho no topo
+  const borderColor = cutscenePhase === 1 ? '#00ffee' : cutscenePhase === 2 ? '#ff4444' : '#aa44ff';
+  ctx.fillStyle = borderColor;
+  ctx.fillRect(0, 0, W, 3);
+
+  // Label de fase no topo
+  ctx.fillStyle = borderColor;
+  ctx.globalAlpha = 0.7;
+  ctx.font = 'bold 11px "Courier New"';
+  ctx.textAlign = 'left';
+  ctx.fillText(`— FASE ${cutscenePhase} —`, 14, 20);
+  ctx.globalAlpha = 1;
+
+  // Retrato
+  const PORTRAIT_H = 220;
+  const PORTRAIT_SCALE = PORTRAIT_H / (img && img.naturalHeight > 0 ? img.naturalHeight : PORTRAIT_H);
+  const portraitW = img && img.naturalWidth > 0 ? img.naturalWidth * PORTRAIT_SCALE : 120;
+  const portraitX = isLeft ? 30 : W - portraitW - 30;
+  const portraitY = H - 260 - 10;
+
+  // Sombra/glow atrás do retrato
+  ctx.save();
+  ctx.shadowColor = borderColor;
+  ctx.shadowBlur  = 28;
+  if (img && img.complete && img.naturalWidth > 0) {
+    ctx.drawImage(img, portraitX, portraitY, portraitW, PORTRAIT_H);
+  } else {
+    ctx.fillStyle = '#334';
+    ctx.fillRect(portraitX, portraitY, portraitW, PORTRAIT_H);
+  }
+  ctx.restore();
+
+  // Borda do retrato
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth   = 2;
+  ctx.globalAlpha = 0.6;
+  ctx.strokeRect(portraitX - 2, portraitY - 2, portraitW + 4, PORTRAIT_H + 4);
+  ctx.globalAlpha = 1;
+
+  // Caixa de diálogo na parte inferior
+  const boxY = H - 130;
+  ctx.fillStyle = 'rgba(5, 0, 20, 0.92)';
+  ctx.fillRect(0, boxY, W, 130);
+  ctx.fillStyle = borderColor;
+  ctx.fillRect(0, boxY, W, 2);
+
+  // Nome do personagem
+  const nameX = isLeft ? 170 : 20;
+  ctx.fillStyle = '#ffcc00';
+  ctx.font      = 'bold 13px "Courier New"';
+  ctx.textAlign = 'left';
+  ctx.fillText(line.name, nameX, boxY + 22);
+
+  // Texto da fala — com quebra de linha automática
+  ctx.fillStyle = '#ddddff';
+  ctx.font      = '13px "Courier New"';
+  const maxW    = W - 190;
+  const textX   = isLeft ? 170 : 20;
+  wrapText(ctx, line.text, textX, boxY + 44, maxW, 20);
+
+  // Indicador de continuar (piscante)
+  if (Math.floor(Date.now() / 500) % 2) {
+    const isLast = cutsceneLine === lines.length - 1;
+    ctx.fillStyle = '#00ffee';
+    ctx.font      = '11px "Courier New"';
+    ctx.textAlign = 'right';
+    ctx.fillText(isLast ? '▶ ENTER para começar' : '▶ ENTER para continuar', W - 14, boxY + 118);
+  }
+
+  // Progresso das linhas
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#444466';
+  ctx.font      = '10px "Courier New"';
+  ctx.fillText(`${cutsceneLine + 1} / ${lines.length}`, 14, boxY + 118);
+}
+
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(' ');
+  let line = '';
+  for (const word of words) {
+    const test = line ? line + ' ' + word : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, y);
+      line = word;
+      y += lineHeight;
+    } else {
+      line = test;
+    }
+  }
+  if (line) ctx.fillText(line, x, y);
+}
+
+// ─────────────────────────────────────────────────────────
 //  MAIN LOOP
 // ─────────────────────────────────────────────────────────
 let last = 0;
@@ -1671,6 +1836,7 @@ function loop(ts) {
     if (state === 'dead')         drawDead();
     if (state === 'phase_clear')  drawPhaseClear();
     if (state === 'phase2_clear') drawPhase2Clear();
+    if (state === 'cutscene')     drawCutscene();
     if (state === 'win')          drawWin();
   }
 
