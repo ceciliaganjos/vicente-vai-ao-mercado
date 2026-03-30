@@ -1709,11 +1709,12 @@ function drawCutscene() {
   ctx.globalAlpha = 1;
 
   // Retrato
-  const PORTRAIT_H = 220;
+  const boxY = H - 130;
+  const PORTRAIT_H = 200;
   const PORTRAIT_SCALE = PORTRAIT_H / (img && img.naturalHeight > 0 ? img.naturalHeight : PORTRAIT_H);
   const portraitW = img && img.naturalWidth > 0 ? img.naturalWidth * PORTRAIT_SCALE : 120;
   const portraitX = isLeft ? 30 : W - portraitW - 30;
-  const portraitY = H - 260 - 10;
+  const portraitY = boxY - PORTRAIT_H - 6;  // fica logo acima da caixa de diálogo
 
   // Sombra/glow atrás do retrato
   ctx.save();
@@ -1735,7 +1736,6 @@ function drawCutscene() {
   ctx.globalAlpha = 1;
 
   // Caixa de diálogo na parte inferior
-  const boxY = H - 130;
   ctx.fillStyle = 'rgba(5, 0, 20, 0.92)';
   ctx.fillRect(0, boxY, W, 130);
   ctx.fillStyle = borderColor;
